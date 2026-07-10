@@ -1,12 +1,12 @@
 # TraceForge
 
+[![CI](https://img.shields.io/github/actions/workflow/status/VicenteVila/TraceForge/test.yml?branch=main&label=CI&logo=github)](https://github.com/VicenteVila/TraceForge/actions/workflows/test.yml)
+[![Lint](https://img.shields.io/github/actions/workflow/status/VicenteVila/TraceForge/lint.yml?branch=main&label=lint&logo=github)](https://github.com/VicenteVila/TraceForge/actions/workflows/lint.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg?logo=python)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/cogniteam/traceforge/actions/workflows/test.yml/badge.svg)](https://github.com/cogniteam/traceforge/actions/workflows/test.yml)
-[![PyPI version](https://badge.fury.io/py/traceforge.svg)](https://pypi.org/project/traceforge/)
 [![Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-Trazabilidad estructurada para pipelines multi-agente con LLMs.
+Structured tracing for multi-agent LLM pipelines.
 
 ```python
 import traceforge
@@ -23,73 +23,82 @@ traceforge.show(traceforge.get_last_trace_id())
 
 ```
 Trace: a1b2c3d4-...
-  Spans: 1 | Cost: $0.0020 | Errors: 0
+  Spans: 1 | Duration: 2300ms | Tokens: 1400 | Cost: $0.0009 | Errors: 0
 
 planner (llama-3.3-70b) → 2.3s | 1400 tokens | $0.0009 ✓
 ```
 
 ---
 
-## ¿Por qué TraceForge?
+## Why TraceForge?
 
-Cuando un pipeline multi-agente falla, las preguntas son siempre las mismas:
+When a multi-agent pipeline fails, the questions are always the same:
 
-> *"Mi agente falló en el paso 3 de 7, ¿qué vio, qué pensó, cuánto costó y por qué no se recuperó?"*
+> *"My agent failed at step 3 of 7 — what did it see, what did it think, how much did it cost, and why didn't it recover?"*
 
-Los logs tradicionales no conectan causas. TraceForge enlaza cada paso con un **trace_id persistente** que atraviesa toda la ejecución, preservando la jerarquía de llamadas, el coste por modelo y la latencia de cada nodo.
+Traditional logs don't connect causes. TraceForge links every step with a **persistent trace_id** that flows through the entire execution, preserving call hierarchy, per-model cost, and latency at every node.
 
-### Lo que NO es
+### What it is NOT
 
-- ❌ **No** es un sistema de logging general (no compite con structlog o loguru)
-- ❌ **No** es un APM tradicional (no compite con Datadog/New Relic)
-- ❌ **No** es un reemplazo de OpenTelemetry (puede exportar a OTEL, pero no es su propósito principal)
+- ❌ A general-purpose logging system (not competing with structlog or loguru)
+- ❌ A traditional APM (not competing with Datadog/New Relic)
+- ❌ An OpenTelemetry replacement (can export to OTEL, but that's not its primary purpose)
 
-### Lo que SÍ es
+### What it IS
 
-- ✅ Herramienta que entiende que los "pasos" en un pipeline multi-agente son **nodos en un grafo**, no líneas en un log
-- ✅ Decorador `@trace()` que captura input/output/error automáticamente
-- ✅ Context manager `span()` para código que no es una función
-- ✅ Persistencia en SQLite con consultas por agente, estado, duración
-- ✅ Cálculo automático de coste por modelo (Gemini, GPT, Claude, Llama, DeepSeek, etc.)
-- ✅ CLI con árboles Rich y reportes HTML con Gantt interactivo
-- ✅ Exportación a OpenTelemetry
+- ✅ A tool that understands pipeline steps are **nodes in a graph**, not lines in a log
+- ✅ `@trace()` decorator that captures input/output/error automatically
+- ✅ `span()` context manager for code that isn't a function
+- ✅ SQLite persistence with queries by agent, status, duration
+- ✅ Automatic cost calculation per model (Gemini, GPT, Claude, Llama, DeepSeek, 200+)
+- ✅ CLI with Rich tree output and HTML reports (Markdown/JSON also supported)
+- ✅ OpenTelemetry export
+- ✅ Async support with contextvars for concurrent traces
 
 ---
 
-## Instalación
+## Installation
 
 ```bash
-pip install traceforge
+pip install git+https://github.com/VicenteVila/TraceForge.git
 ```
 
-Con extras:
+With extras:
 
 ```bash
-pip install traceforge[plotly]   # reportes HTML con Gantt
-pip install traceforge[otel]     # exportación OpenTelemetry
-pip install traceforge[dev]      # desarrollo (pytest)
+pip install "traceforge[plotly] @ git+https://github.com/VicenteVila/TraceForge.git"   # HTML reports with Gantt charts
+pip install "traceforge[otel] @ git+https://github.com/VicenteVila/TraceForge.git"     # OpenTelemetry export
+pip install "traceforge[dev] @ git+https://github.com/VicenteVila/TraceForge.git"      # development (pytest, ruff)
+```
+
+From source:
+
+```bash
+git clone https://github.com/VicenteVila/TraceForge.git
+cd TraceForge
+pip install -e .
 ```
 
 ---
 
 ## Quickstart
 
-### 1. Decorador básico
+### 1. Basic decorator
 
 ```python
 import traceforge
 
 traceforge.configure()
 
-@traceforge.trace(agent="saludo", model="mock-1.0")
-def saludar(nombre: str) -> str:
-    return f"Hola, {nombre}!"
+@traceforge.trace(agent="greeter", model="mock-1.0")
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
 
-saludar("Mundo")
+greet("TraceForge")
 traceforge.show(traceforge.get_last_trace_id())
 ```
 
-### 2. Context manager para bloques
+### 2. Context manager for blocks
 
 ```python
 with traceforge.span(agent="developer", model="llama-3.3-70b") as span:
@@ -100,7 +109,7 @@ with traceforge.span(agent="developer", model="llama-3.3-70b") as span:
         span.set_error(str(result.error))
 ```
 
-### 3. Pipeline multi-agente
+### 3. Multi-agent pipeline
 
 ```python
 @traceforge.trace(agent="orchestrator", model=None)
@@ -114,70 +123,84 @@ result = run_pipeline("Build a landing page")
 traceforge.report(traceforge.get_last_trace_id(), output="report.html")
 ```
 
-### 4. Consultas
+### 4. Queries
 
 ```python
-# Todas las trazas de un agente
+# All traces for an agent
 traceforge.query(agent="planner")
 
-# Solo fallos
+# Only failures
 traceforge.query(status="error")
 
-# Ejecuciones lentas (>5s)
+# Slow executions (>5s)
 traceforge.query(min_duration_ms=5000)
 ```
 
 ---
 
+## Examples
+
+The [`examples/`](examples/) directory contains ready-to-run scripts:
+
+| Example | What it shows |
+|---|---|
+| [`basic_usage.py`](examples/basic_usage.py) | Minimal pipeline with decorators |
+| [`multi_agent_pipeline.py`](examples/multi_agent_pipeline.py) | Orchestrator with error recovery |
+| [`openai_integration.py`](examples/openai_integration.py) | OpenAI call instrumentation |
+| [`fastapi_integration.py`](examples/fastapi_integration.py) | FastAPI REST endpoints with tracing |
+| [`async_multi_agent.py`](examples/async_multi_agent.py) | Concurrent async agents with `asyncio.gather` |
+
+---
+
 ## API
 
-| Función | Descripción |
+| Function | Description |
 |---|---|
-| `configure(collector, db_path)` | Configurar backend (memory, sqlite, otel) |
-| `@trace(agent, model, tags)` | Decorador para instrumentar funciones |
-| `span(agent, model, tags)` | Context manager para bloques de código |
-| `query(trace_id, agent, status, ...)` | Consultar spans con filtros |
-| `report(trace_id, format, output)` | Generar reporte HTML/JSON/Markdown |
-| `show(trace_id)` | Mostrar árbol en terminal |
-| `get_last_trace_id()` | Último trace_id generado |
-| `list_traces(limit)` | Listar trace_ids recientes |
+| `configure(collector, db_path)` | Set backend (memory, sqlite, otel) |
+| `@trace(agent, model, tags)` | Decorate functions for automatic tracing |
+| `span(agent, model, tags)` | Context manager for inline code blocks |
+| `query(trace_id, agent, status, ...)` | Search spans with filters |
+| `report(trace_id, format, output)` | Generate HTML / JSON / Markdown report |
+| `show(trace_id)` | Print trace tree to terminal |
+| `get_last_trace_id()` | Return the last generated trace_id |
+| `list_traces(limit)` | List recent trace_ids |
 
 ---
 
 ## CLI
 
 ```bash
-traceforge list --last 10                    # últimas 10 ejecuciones
-traceforge show abc-123                       # árbol de spans
-traceforge stats --agent planner --since 7    # métricas por agente
-traceforge report abc-123 -o report.html      # reporte HTML con Gantt
-traceforge export --format json               # exportar a JSON
-traceforge export --format otel --since 7     # exportar a OpenTelemetry
+traceforge list --last 10                    # last 10 traces
+traceforge show abc-123                       # span tree
+traceforge stats --agent planner --since 7    # metrics by agent
+traceforge report abc-123 -o report.html      # HTML report with Gantt
+traceforge export --format json               # export to JSON
+traceforge export --format otel --since 7     # export to OpenTelemetry
 ```
 
 ---
 
-## Modelos soportados (coste automático)
+## Supported models (automatic cost)
 
-| Familia | Modelos |
+| Family | Models |
 |---|---|
 | **Gemini** | 1.5 flash/pro, 2.0 flash/lite, 2.5 flash/pro |
 | **OpenAI** | GPT-4o/mini/turbo, o1/mini/preview, o3-mini |
 | **Anthropic** | Claude 3 haiku/sonnet/opus, 3.5 sonnet/haiku, 4 sonnet |
-| **Meta (Llama)** | 3.1/3.2/3.3/4 (8B a 405B) |
+| **Meta (Llama)** | 3.1/3.2/3.3/4 (8B to 405B) |
 | **DeepSeek** | V3, R1, R1 distill, coder:6.7b |
 | **Mistral** | small/medium/large, Codestral |
 | **Groq** | llama, mixtral, gemma |
 | **Qwen** | 2.5-72b, 2.5-coder-32b |
 | **Cohere** | Command R / R+ |
 
-¿Falta un modelo? Abre un issue o añádelo en `traceforge/pricing.py`.
+Missing a model? Open an issue or add it in `traceforge/pricing.py`.
 
 ---
 
 ## FAQ
 
-### ¿Cómo integro TraceForge con OpenAI?
+### How do I integrate TraceForge with OpenAI?
 
 ```python
 import traceforge
@@ -194,9 +217,11 @@ def ask_llm(prompt: str) -> str:
     return response.choices[0].message.content
 ```
 
-### ¿Funciona con async?
+See [`examples/openai_integration.py`](examples/openai_integration.py) for a runnable version.
 
-Sí. `@traceforge.trace` detecta automáticamente si la función es async y usa el manejador apropiado.
+### Does it work with async?
+
+Yes. `@trace` detects async functions automatically and uses the appropriate handler. Context variables are properly isolated per-task.
 
 ```python
 @traceforge.trace(agent="worker", model="gpt-4o")
@@ -204,16 +229,17 @@ async def process(data: str) -> str:
     return await llm_call(data)
 ```
 
-### ¿Puedo usar mi propio collector?
+See [`examples/async_multi_agent.py`](examples/async_multi_agent.py) for concurrent async pipelines with `asyncio.gather`.
 
-Sí. Hereda de `TraceCollector` e implementa `save()`, `get_trace()`, `query()`.
+### Can I use my own collector?
+
+Yes. Subclass `TraceCollector` and implement `save()`, `get_trace()`, `query()`.
 
 ```python
 from traceforge import TraceCollector
 
 class MyCollector(TraceCollector):
-    def save(self, span):
-        ...
+    def save(self, span): ...
 ```
 
 ---
@@ -222,23 +248,27 @@ class MyCollector(TraceCollector):
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest          # 68 tests
+ruff check .    # zero errors
 ```
 
 ---
 
-## Licencia
+## License
 
 MIT
 
 ---
 
-## Contribuir
+## Contributing
 
-1. Fork el repo
-2. Crea una rama (`git checkout -b feature/nueva-funcionalidad`)
-3. Commit (`git commit -am 'Añade nueva funcionalidad'`)
-4. Push (`git push origin feature/nueva-funcionalidad`)
-5. Abre un Pull Request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-Los tests deben pasar y el código debe ser formateado con ruff.
+Quick summary:
+1. Fork the repo
+2. Create a branch (`git checkout -b feature/amazing-feature`)
+3. Commit (`git commit -am 'Add amazing feature'`)
+4. Push (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Tests must pass and code must be ruff-clean.
