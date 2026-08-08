@@ -178,6 +178,24 @@ def instrument(
     return _instrument(collector=collector, providers=providers)
 
 
+def run_evals(*args, **kwargs):
+    from .evals import run_evals as _run_evals
+
+    return _run_evals(_collector, *args, **kwargs)
+
+
+def compare_prompts(*args, **kwargs):
+    from .abtest import compare_prompts as _compare
+
+    return _compare(*args, **kwargs)
+
+
+def dashboard(*args, **kwargs):
+    from .dashboard import run_dashboard as _dashboard
+
+    return _dashboard(_collector, *args, **kwargs)
+
+
 __all__ = [
     "configure",
     "init",
@@ -192,5 +210,8 @@ __all__ = [
     "set_truncation_limits",
     "set_pii_masker",
     "refresh_prices",
+    "run_evals",
+    "compare_prompts",
+    "dashboard",
     "TraceSpan",
 ]

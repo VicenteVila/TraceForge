@@ -442,6 +442,18 @@ def query(
 
 
 @app.command()
+def dashboard(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host a escuchar"),
+    port: int = typer.Option(8080, "--port", "-p", help="Puerto del dashboard"),
+    open_browser: bool = typer.Option(False, "--open", help="Abrir navegador"),
+):
+    from .dashboard import run_dashboard
+
+    _collector = _get_default_collector()
+    run_dashboard(collector=_collector, host=host, port=port, open_browser=open_browser)
+
+
+@app.command()
 def clear(
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirmar el borrado"),
 ):

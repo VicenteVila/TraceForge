@@ -90,6 +90,7 @@ select = ["E", "F", "W", "I"]
 [tool.ruff.lint.per-file-ignores]
 # HTML template strings can't be cleanly wrapped
 "traceforge/reporting.py" = ["E501"]
+"traceforge/dashboard.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["traceforge"]

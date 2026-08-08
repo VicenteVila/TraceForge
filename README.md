@@ -205,6 +205,7 @@ traceforge report abc-123 -o report.html           # HTML report with Gantt
 traceforge export --format json                    # export to JSON
 traceforge export --format otel --since 7          # export to OpenTelemetry
 traceforge clear --yes                             # wipe all traces
+traceforge dashboard --port 8080                   # web dashboard (SPA)
 ```
 
 Point the CLI at any backend (memory, sqlite, postgres, clickhouse):
@@ -216,6 +217,90 @@ traceforge --collector clickhouse --dsn "http://user:pass@localhost:8123/db" lis
 ```
 
 If only `--dsn` is given, the backend is inferred from the URL (`http(s)` → clickhouse, otherwise postgres).
+
+---
+
+## Web dashboard
+
+A zero-dependency web dashboard (single-file SPA over a small stdlib HTTP API)
+lets you inspect traces, per-agent stats and filtered queries in the browser:
+
+```bash
+traceforge dashboard --port 8080        # or: python -m traceforge.dashboard
+# open http://127.0.0.1:8080
+```
+
+Or from Python against any collector:
+
+```python
+import traceforge
+
+traceforge.init(collector="postgres", dsn="postgresql://...", auto_instrument=["openai"])
+traceforge.dashboard(host="0.0.0.0", port=8080)
+```
+
+The backend exposes a JSON API (`/api/health`, `/api/traces`, `/api/trace/<id>`,
+`/api/stats`, `/api/query`) that scripts can consume too.
+
+---
+
+## Evals
+
+`traceforge.evals` scores captured spans — pure Python, no extra dependencies
+for the built-in checks, with optional LLM-as-judge upgrades:
+
+```python
+import traceforge
+from traceforge.evals import openai_judge, summary
+
+traceforge.init(auto_instrument=["openai"])
+
+results = traceforge.run_evals(judge=openai_judge())     # runs over saved spans
+print(summary(results))
+# {'factuality': {'avg_score': 0.92, 'pass_rate': 1.0, 'count': 40}, ...}
+```
+
+- **Factuality** — ROUGE-L F-score against a ground truth: pass `references={span_id_or_trace_id: truth}`.
+- **Toxicity** — a built-in lexicon by default; upgraded to an LLM judge when `judge=` is given (scores are normalized to *higher = better*, so a high toxicity score means clean/safe).
+- **LLM-as-judge** — any callable `prompt -> response`; helpers `openai_judge()`, `anthropic_judge()` are provided.
+
+Per-span control:
+
+```python
+from traceforge.evals import evaluate_span, run_evals
+
+results = run_evals(collector, span_ids=[sid], judge=openai_judge(), references={sid: "ground truth"})
+```
+
+---
+
+## A/B testing prompts
+
+`traceforge.abtest` runs an instrumented function over prompt variants and
+picks a winner by quality (when a judge/references are given), cost and latency:
+
+```python
+from traceforge.abtest import compare_prompts
+from traceforge.evals import openai_judge
+import traceforge
+
+@traceforge.trace(agent="writer")
+def answer(prompt, sample):
+    return client.chat.completions.create(model="gpt-4o-mini", messages=[...])  # auto-instrumented
+
+result = compare_prompts(
+    answer,
+    {"concise": "Answer in one sentence.", "detailed": "Answer in three sentences."},
+    samples=["What is AI?", "Explain entropy."],
+    references=["A clear definition of AI", "Entropy is disorder."],
+    judge=openai_judge(),
+)
+print(result.winner, result.reason)      # e.g. 'concise  eval 0.833, $0.0001/run, 42ms avg'
+print(result)                            # full per-variant metrics
+```
+
+Variants are compared on error rate, average duration, tokens, cost and
+(averaged) eval score; the winner never has 100% errors.
 
 ---
 
