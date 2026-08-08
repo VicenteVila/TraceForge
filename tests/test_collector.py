@@ -164,9 +164,7 @@ def test_concurrent_parent_child_linking():
 
     def worker(n: int) -> None:
         try:
-            child = TraceSpan(
-                agent=f"child-{n}", parent_id=root.span_id, trace_id=root.trace_id
-            )
+            child = TraceSpan(agent=f"child-{n}", parent_id=root.span_id, trace_id=root.trace_id)
             collector.save(child)
         except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)

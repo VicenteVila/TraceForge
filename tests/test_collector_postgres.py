@@ -53,7 +53,7 @@ class _FakeDB:
         raise AssertionError(f"Unhandled SQL: {sql}")
 
     def _select_where(self, sql, params):
-        inner = sql[len("SELECT * FROM spans WHERE "):]
+        inner = sql[len("SELECT * FROM spans WHERE ") :]
         where = inner.split(" ORDER BY")[0].strip()
         rows = list(self.store.values())
         if where == "TRUE":
@@ -154,9 +154,16 @@ def test_save_and_retrieve(collector):
 def test_streaming_fields_roundtrip(collector):
     c, _ = collector
     span = TraceSpan(
-        agent="stream", model="gpt-4o", stream=True,
-        ttft_ms=120.5, stream_chunks=4, chunk_offsets_ms=[10.0, 50.0, 90.0, 120.5],
-        tokens_input=3, tokens_output=7, output="hello", input_truncated=True,
+        agent="stream",
+        model="gpt-4o",
+        stream=True,
+        ttft_ms=120.5,
+        stream_chunks=4,
+        chunk_offsets_ms=[10.0, 50.0, 90.0, 120.5],
+        tokens_input=3,
+        tokens_output=7,
+        output="hello",
+        input_truncated=True,
     )
     c.save(span)
 

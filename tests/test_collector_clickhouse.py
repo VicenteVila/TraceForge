@@ -59,7 +59,7 @@ class _FakeClient:
         raise AssertionError(f"Unhandled SQL: {sql}")
 
     def _filter(self, sql, params):
-        inner = sql[len("SELECT * FROM spans FINAL WHERE "):]
+        inner = sql[len("SELECT * FROM spans FINAL WHERE ") :]
         where = inner.split(" ORDER BY")[0].strip()
         if where == "1 = 1":
             return list(self.store.values())
@@ -126,9 +126,14 @@ def test_save_and_retrieve(collector):
 def test_streaming_fields_roundtrip(collector):
     c, _ = collector
     span = TraceSpan(
-        agent="stream", model="gpt-4o", stream=True,
-        ttft_ms=80.0, stream_chunks=3, chunk_offsets_ms=[5.0, 40.0, 80.0],
-        output="hola", tokens_output=2,
+        agent="stream",
+        model="gpt-4o",
+        stream=True,
+        ttft_ms=80.0,
+        stream_chunks=3,
+        chunk_offsets_ms=[5.0, 40.0, 80.0],
+        output="hola",
+        tokens_output=2,
     )
     c.save(span)
 

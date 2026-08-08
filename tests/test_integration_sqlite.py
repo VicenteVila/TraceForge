@@ -12,6 +12,7 @@ def sqlite_collector(tmp_path):
     configure(collector="sqlite", db_path=db_path)
     yield db_path
     from traceforge import _collector
+
     if hasattr(_collector, "close"):
         _collector.close()
     if os.path.exists(db_path):
@@ -61,6 +62,7 @@ def test_sqlite_cost_calculation(sqlite_collector):
     @trace(agent="costly", model="gpt-4o-mini")
     def costly_func() -> str:
         from traceforge import span
+
         with span(agent="costly_span", model="gpt-4o-mini") as sp:
             sp.set_tokens(input=500, output=300)
         return "done"

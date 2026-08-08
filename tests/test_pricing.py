@@ -74,12 +74,16 @@ def pricing_state():
 
 def test_refresh_prices_from_url_with_cache(pricing_state, tmp_path):
     src = tmp_path / "prices.json"
-    src.write_text(json.dumps({
-        "nova-model": {
-            "input_cost_per_token": 0.000002,
-            "output_cost_per_token": 0.000008,
-        },
-    }))
+    src.write_text(
+        json.dumps(
+            {
+                "nova-model": {
+                    "input_cost_per_token": 0.000002,
+                    "output_cost_per_token": 0.000008,
+                },
+            }
+        )
+    )
     cache = tmp_path / "cache.json"
 
     n = pricing.refresh_prices(url=src.as_uri(), cache_path=str(cache))
@@ -92,12 +96,16 @@ def test_refresh_prices_from_url_with_cache(pricing_state, tmp_path):
 
 def test_refresh_prices_persists_and_reloads(pricing_state, tmp_path):
     src = tmp_path / "prices.json"
-    src.write_text(json.dumps({
-        "cached-model": {
-            "input_cost_per_token": 0.000001,
-            "output_cost_per_token": 0.000002,
-        },
-    }))
+    src.write_text(
+        json.dumps(
+            {
+                "cached-model": {
+                    "input_cost_per_token": 0.000001,
+                    "output_cost_per_token": 0.000002,
+                },
+            }
+        )
+    )
     cache = tmp_path / "cache.json"
     pricing.refresh_prices(url=src.as_uri(), cache_path=str(cache))
 
@@ -110,10 +118,14 @@ def test_refresh_prices_persists_and_reloads(pricing_state, tmp_path):
 
 def test_refresh_prices_skips_entries_without_rates(pricing_state, tmp_path):
     src = tmp_path / "prices.json"
-    src.write_text(json.dumps({
-        "has-rates": {"input_cost_per_token": 0.000001, "output_cost_per_token": 0.000002},
-        "no-rates": {"context_window": 128000},
-    }))
+    src.write_text(
+        json.dumps(
+            {
+                "has-rates": {"input_cost_per_token": 0.000001, "output_cost_per_token": 0.000002},
+                "no-rates": {"context_window": 128000},
+            }
+        )
+    )
     cache = tmp_path / "cache.json"
     n = pricing.refresh_prices(url=src.as_uri(), cache_path=str(cache))
     assert n == 1

@@ -121,29 +121,31 @@ def _build_span_tree_data(
     spans_by_id: dict[str, TraceSpan],
     depth: int = 0,
 ) -> list[dict[str, Any]]:
-    result = [{
-        "span_id": span.span_id,
-        "trace_id": span.trace_id,
-        "parent_id": span.parent_id or "",
-        "agent": span.agent,
-        "model": span.model or "",
-        "status": span.status,
-        "duration_ms": span.duration_ms,
-        "tokens_input": span.tokens_input,
-        "tokens_output": span.tokens_output,
-        "cost_usd": span.cost_usd,
-        "error": span.error or "",
-        "input_truncated": span.input_truncated,
-        "output_truncated": span.output_truncated,
-        "stream": span.stream,
-        "ttft_ms": span.ttft_ms,
-        "stream_chunks": span.stream_chunks,
-        "chunk_offsets_ms": span.chunk_offsets_ms,
-        "throughput_tps": round(span.throughput_tps, 1) if span.throughput_tps else 0,
-        "started_at": span.started_at,
-        "finished_at": span.finished_at or span.started_at,
-        "depth": depth,
-    }]
+    result = [
+        {
+            "span_id": span.span_id,
+            "trace_id": span.trace_id,
+            "parent_id": span.parent_id or "",
+            "agent": span.agent,
+            "model": span.model or "",
+            "status": span.status,
+            "duration_ms": span.duration_ms,
+            "tokens_input": span.tokens_input,
+            "tokens_output": span.tokens_output,
+            "cost_usd": span.cost_usd,
+            "error": span.error or "",
+            "input_truncated": span.input_truncated,
+            "output_truncated": span.output_truncated,
+            "stream": span.stream,
+            "ttft_ms": span.ttft_ms,
+            "stream_chunks": span.stream_chunks,
+            "chunk_offsets_ms": span.chunk_offsets_ms,
+            "throughput_tps": round(span.throughput_tps, 1) if span.throughput_tps else 0,
+            "started_at": span.started_at,
+            "finished_at": span.finished_at or span.started_at,
+            "depth": depth,
+        }
+    ]
     for child_id in span.children:
         child = spans_by_id.get(child_id)
         if child:
@@ -216,15 +218,17 @@ def _build_gantt(
         _add_children(s, spans, add_spans)
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=[e - s for s, e in zip(starts, ends)],
-        y=labels,
-        orientation="h",
-        marker=dict(color=colors),
-        base=starts,
-        customdata=list(zip(hover_texts)),
-        hovertemplate="%{customdata[0]}<br>Start: %{base:.0f}ms<br>End: %{x:.0f}ms<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=[e - s for s, e in zip(starts, ends)],
+            y=labels,
+            orientation="h",
+            marker=dict(color=colors),
+            base=starts,
+            customdata=list(zip(hover_texts)),
+            hovertemplate="%{customdata[0]}<br>Start: %{base:.0f}ms<br>End: %{x:.0f}ms<extra></extra>",
+        )
+    )
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
@@ -285,21 +289,25 @@ def _build_sankey(spans: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
         target.append(node_map[tgt])
         colors_link.append("rgba(34, 197, 94, 0.3)" if status == "ok" else "rgba(239, 68, 68, 0.3)")
 
-    fig = go.Figure(data=[go.Sankey(
-        node=dict(
-            pad=15,
-            thickness=20,
-            line=dict(color="#334155", width=0.5),
-            label=node_list,
-            color="#6366f1",
-        ),
-        link=dict(
-            source=source,
-            target=target,
-            value=[1] * len(source),
-            color=colors_link,
-        ),
-    )])
+    fig = go.Figure(
+        data=[
+            go.Sankey(
+                node=dict(
+                    pad=15,
+                    thickness=20,
+                    line=dict(color="#334155", width=0.5),
+                    label=node_list,
+                    color="#6366f1",
+                ),
+                link=dict(
+                    source=source,
+                    target=target,
+                    value=[1] * len(source),
+                    color=colors_link,
+                ),
+            )
+        ]
+    )
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
@@ -337,15 +345,20 @@ def generate_report(
 
     if format == "json":
         import json
-        result = json.dumps({
-            "trace_id": trace_id,
-            "total_spans": total_spans,
-            "total_duration_ms": total_duration,
-            "total_tokens": total_tokens,
-            "total_cost": total_cost,
-            "error_count": error_count,
-            "spans": flat,
-        }, indent=2, default=str)
+
+        result = json.dumps(
+            {
+                "trace_id": trace_id,
+                "total_spans": total_spans,
+                "total_duration_ms": total_duration,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+                "error_count": error_count,
+                "spans": flat,
+            },
+            indent=2,
+            default=str,
+        )
         if output:
             with open(output, "w") as f:
                 f.write(result)

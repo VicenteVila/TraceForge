@@ -91,6 +91,7 @@ def _llm_wrapper_factory(
 ):
     def factory(original: Callable) -> Callable:
         if inspect.iscoroutinefunction(original):
+
             @functools.wraps(original)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 model = kwargs.get("model")
@@ -121,9 +122,7 @@ def _llm_wrapper_factory(
                     sp.close()
                     _collector.save(sp)
                     raise
-                return _AsyncStreamProxy(
-                    stream, sp, _collector, started, chunk_text, usage_extractor
-                )
+                return _AsyncStreamProxy(stream, sp, _collector, started, chunk_text, usage_extractor)
 
             return async_wrapper
 
@@ -346,6 +345,7 @@ def instrument_openai(
     else:
         try:
             from openai.resources.chat.completions import AsyncCompletions, Completions
+
             resources.extend([Completions, AsyncCompletions])
         except ImportError:
             return False
@@ -378,6 +378,7 @@ def instrument_anthropic(
     else:
         try:
             from anthropic.resources.messages import AsyncMessages, Messages
+
             resources.extend([Messages, AsyncMessages])
         except ImportError:
             return False
@@ -448,11 +449,7 @@ def instrument(
     }
     if providers is None:
         providers = ["openai", "anthropic"]
-    return {
-        name: registrars[name](collector=collector)
-        for name in registrars
-        if name in providers
-    }
+    return {name: registrars[name](collector=collector) for name in registrars if name in providers}
 
 
 _langchain_cms: list[Any] = []

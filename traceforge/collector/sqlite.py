@@ -140,9 +140,7 @@ class SQLiteCollector(TraceCollector):
         try:
             data = self._serialize_span(span)
 
-            cursor = conn.execute(
-                "SELECT children FROM spans WHERE span_id = ?", (span.span_id,)
-            )
+            cursor = conn.execute("SELECT children FROM spans WHERE span_id = ?", (span.span_id,))
             existing = cursor.fetchone()
             if existing:
                 existing_children: list[str] = json.loads(existing["children"]) if existing["children"] else []
@@ -150,9 +148,7 @@ class SQLiteCollector(TraceCollector):
                     if cid not in span.children:
                         span.children.append(cid)
 
-            cursor = conn.execute(
-                "SELECT span_id FROM spans WHERE parent_id = ?", (span.span_id,)
-            )
+            cursor = conn.execute("SELECT span_id FROM spans WHERE parent_id = ?", (span.span_id,))
             for row in cursor.fetchall():
                 cid = row["span_id"]
                 if cid not in span.children:
@@ -160,7 +156,8 @@ class SQLiteCollector(TraceCollector):
 
             data["children"] = json.dumps(span.children, ensure_ascii=False)
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO spans (
                     span_id, trace_id, parent_id, agent, model,
                     input, output, error,
@@ -178,12 +175,12 @@ class SQLiteCollector(TraceCollector):
                     :status, :tags, :children,
                     :stream, :ttft_ms, :stream_chunks, :chunk_offsets_ms
                 )
-            """, data)
+            """,
+                data,
+            )
 
             if span.parent_id:
-                cursor = conn.execute(
-                    "SELECT children FROM spans WHERE span_id = ?", (span.parent_id,)
-                )
+                cursor = conn.execute("SELECT children FROM spans WHERE span_id = ?", (span.parent_id,))
                 row = cursor.fetchone()
                 if row:
                     children: list[str] = json.loads(row["children"]) if row["children"] else []
@@ -191,7 +188,7 @@ class SQLiteCollector(TraceCollector):
                         children.append(span.span_id)
                         conn.execute(
                             "UPDATE spans SET children = ? WHERE span_id = ?",
-                            (json.dumps(children, ensure_ascii=False), span.parent_id)
+                            (json.dumps(children, ensure_ascii=False), span.parent_id),
                         )
 
             conn.commit()
@@ -201,28 +198,26 @@ class SQLiteCollector(TraceCollector):
 
     def get_trace(self, trace_id: str) -> list[TraceSpan]:
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM spans WHERE trace_id = ? ORDER BY started_at",
-            (trace_id,)
-        )
+        cursor = conn.execute("SELECT * FROM spans WHERE trace_id = ? ORDER BY started_at", (trace_id,))
         return [self._deserialize_span(row) for row in cursor.fetchall()]
 
     def get_span(self, span_id: str) -> Optional[TraceSpan]:
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM spans WHERE span_id = ?", (span_id,)
-        )
+        cursor = conn.execute("SELECT * FROM spans WHERE span_id = ?", (span_id,))
         row = cursor.fetchone()
         return self._deserialize_span(row) if row else None
 
     def list_traces(self, limit: int = 10) -> list[str]:
         conn = self._get_connection()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT trace_id FROM spans
             GROUP BY trace_id
             ORDER BY MAX(started_at) DESC
             LIMIT ?
-        """, (limit,))
+        """,
+            (limit,),
+        )
         return [row["trace_id"] for row in cursor.fetchall()]
 
     def get_last_trace_id(self) -> Optional[str]:
@@ -264,10 +259,7 @@ class SQLiteCollector(TraceCollector):
 
         where = " AND ".join(conditions) if conditions else "1=1"
         conn = self._get_connection()
-        cursor = conn.execute(
-            f"SELECT * FROM spans WHERE {where} ORDER BY started_at",
-            params
-        )
+        cursor = conn.execute(f"SELECT * FROM spans WHERE {where} ORDER BY started_at", params)
         return [self._deserialize_span(row) for row in cursor.fetchall()]
 
     def clear(self) -> None:

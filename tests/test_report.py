@@ -73,10 +73,7 @@ def test_report_stats_accuracy(collector, trace_id):
     result = generate_report(trace_id, format="json", collector=collector)
     data = json.loads(result)
     assert data["total_spans"] == 4
-    assert data["total_tokens"] == sum(
-        s.tokens_input + s.tokens_output
-        for s in collector.get_trace(trace_id)
-    )
+    assert data["total_tokens"] == sum(s.tokens_input + s.tokens_output for s in collector.get_trace(trace_id))
     assert data["error_count"] == 0
 
 

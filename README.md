@@ -439,8 +439,21 @@ class MyCollector(TraceCollector):
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 169 unit tests (179 with live-DB integration suites)
-ruff check .    # zero errors
+pytest                 # unit tests + coverage gate (>=80%), fails under threshold
+ruff check .           # zero errors
+ruff format --check .  # formatting
+make check             # lint + format in one step
+make coverage          # detailed coverage report
+```
+
+Quality gates are enforced in CI (`.github/workflows`): ruff lint + format on
+every push/PR, a unit-test matrix (Python 3.10–3.13 × Linux/macOS/Windows) with
+a coverage gate, and an auto-publish to PyPI on version tags. For local hygiene
+there's a `Makefile` and a `.pre-commit-config.yaml`:
+
+```bash
+make install-dev
+pre-commit install       # ruff + basic hooks on every commit
 ```
 
 ---

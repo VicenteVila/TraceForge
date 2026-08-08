@@ -47,13 +47,29 @@ CREATE INDEX IF NOT EXISTS idx_spans_started_at ON spans(started_at);
 _DEFAULT_DSN = "postgresql://localhost/traceforge"
 
 _COLUMNS = (
-    "span_id", "trace_id", "parent_id", "agent", "model",
-    "input", "output", "error",
-    "tokens_input", "tokens_output", "cost_usd",
-    "started_at", "finished_at", "duration_ms",
-    "status", "tags", "children",
-    "input_truncated", "output_truncated",
-    "stream", "ttft_ms", "stream_chunks", "chunk_offsets_ms",
+    "span_id",
+    "trace_id",
+    "parent_id",
+    "agent",
+    "model",
+    "input",
+    "output",
+    "error",
+    "tokens_input",
+    "tokens_output",
+    "cost_usd",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "status",
+    "tags",
+    "children",
+    "input_truncated",
+    "output_truncated",
+    "stream",
+    "ttft_ms",
+    "stream_chunks",
+    "chunk_offsets_ms",
 )
 
 
@@ -71,9 +87,7 @@ class PostgresCollector(TraceCollector):
             try:
                 import psycopg
             except ImportError:
-                raise ImportError(
-                    "PostgreSQL support requires psycopg: pip install traceforge[postgres]"
-                )
+                raise ImportError("PostgreSQL support requires psycopg: pip install traceforge[postgres]")
             self._psycopg = psycopg
         return self._psycopg
 
@@ -179,9 +193,7 @@ class PostgresCollector(TraceCollector):
                 )
 
                 if span.parent_id:
-                    cur.execute(
-                        "SELECT children FROM spans WHERE span_id = %s", (span.parent_id,)
-                    )
+                    cur.execute("SELECT children FROM spans WHERE span_id = %s", (span.parent_id,))
                     prow = cur.fetchone()
                     if prow:
                         children: list[str] = json.loads(prow["children"]) if prow["children"] else []
@@ -199,9 +211,7 @@ class PostgresCollector(TraceCollector):
     def get_trace(self, trace_id: str) -> list[TraceSpan]:
         conn = self._get_connection()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM spans WHERE trace_id = %s ORDER BY started_at", (trace_id,)
-            )
+            cur.execute("SELECT * FROM spans WHERE trace_id = %s ORDER BY started_at", (trace_id,))
             return [self._deserialize_span(row) for row in cur.fetchall()]
 
     def get_span(self, span_id: str) -> Optional[TraceSpan]:
@@ -228,9 +238,7 @@ class PostgresCollector(TraceCollector):
     def get_last_trace_id(self) -> Optional[str]:
         conn = self._get_connection()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT trace_id FROM spans ORDER BY started_at DESC LIMIT 1"
-            )
+            cur.execute("SELECT trace_id FROM spans ORDER BY started_at DESC LIMIT 1")
             row = cur.fetchone()
             return row["trace_id"] if row else None
 
@@ -263,9 +271,7 @@ class PostgresCollector(TraceCollector):
         where = " AND ".join(conditions) if conditions else "TRUE"
         conn = self._get_connection()
         with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM spans WHERE {where} ORDER BY started_at", params
-            )
+            cur.execute(f"SELECT * FROM spans WHERE {where} ORDER BY started_at", params)
             return [self._deserialize_span(row) for row in cur.fetchall()]
 
     def clear(self) -> None:

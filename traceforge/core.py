@@ -41,6 +41,7 @@ def set_truncation_limits(
 def _calculate_cost(model: str | None, tokens_input: int = 0, tokens_output: int = 0) -> float:
     try:
         from .pricing import calculate_cost
+
         return calculate_cost(model, tokens_input, tokens_output)
     except ImportError:
         return 0.0

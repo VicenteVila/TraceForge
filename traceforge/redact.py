@@ -49,7 +49,7 @@ class PIIMasker:
                 doc = nlp(text)
                 for ent in doc.ents:
                     if ent.label_ in _NER_LABELS:
-                        text = text[:ent.start_char] + f"<{ent.label_}>" + text[ent.end_char:]
+                        text = text[: ent.start_char] + f"<{ent.label_}>" + text[ent.end_char :]
                         hits += 1
         return text, hits
 
@@ -92,10 +92,7 @@ def set_pii_masker(
     if use_ner is not None:
         _masker.use_ner = use_ner
     if patterns is not None:
-        compiled = {
-            label: re.compile(p) if isinstance(p, str) else p
-            for label, p in patterns.items()
-        }
+        compiled = {label: re.compile(p) if isinstance(p, str) else p for label, p in patterns.items()}
         _masker.patterns.update(compiled)
 
 

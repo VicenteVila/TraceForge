@@ -46,13 +46,29 @@ ORDER BY span_id
 _DEFAULT_DSN = "http://localhost:8123/default"
 
 _COLUMNS = [
-    "span_id", "trace_id", "parent_id", "agent", "model",
-    "input", "output", "error",
-    "tokens_input", "tokens_output", "cost_usd",
-    "started_at", "finished_at", "duration_ms",
-    "status", "tags", "children",
-    "input_truncated", "output_truncated",
-    "stream", "ttft_ms", "stream_chunks", "chunk_offsets_ms",
+    "span_id",
+    "trace_id",
+    "parent_id",
+    "agent",
+    "model",
+    "input",
+    "output",
+    "error",
+    "tokens_input",
+    "tokens_output",
+    "cost_usd",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "status",
+    "tags",
+    "children",
+    "input_truncated",
+    "output_truncated",
+    "stream",
+    "ttft_ms",
+    "stream_chunks",
+    "chunk_offsets_ms",
 ]
 
 
@@ -69,8 +85,11 @@ class ClickHouseCollector(TraceCollector):
         self._dsn = dsn
         self._database = database
         self._client = self._get_client(
-            host=host, port=port, database=database,
-            username=username, password=password,
+            host=host,
+            port=port,
+            database=database,
+            username=username,
+            password=password,
         )
         self._client.command(_SCHEMA)
 
@@ -78,10 +97,7 @@ class ClickHouseCollector(TraceCollector):
         try:
             import clickhouse_connect
         except ImportError:
-            raise ImportError(
-                "ClickHouse support requires clickhouse-connect: "
-                "pip install traceforge[clickhouse]"
-            )
+            raise ImportError("ClickHouse support requires clickhouse-connect: pip install traceforge[clickhouse]")
 
         parsed = self._parse_dsn(self._dsn)
         db = database or parsed["database"] or "default"
@@ -173,9 +189,7 @@ class ClickHouseCollector(TraceCollector):
         return [dict(zip(names, r)) for r in result.result_rows]
 
     def save(self, span: TraceSpan) -> None:
-        self._client.insert(
-            "spans", [self._serialize_span(span)], column_names=_COLUMNS
-        )
+        self._client.insert("spans", [self._serialize_span(span)], column_names=_COLUMNS)
 
     def get_trace(self, trace_id: str) -> list[TraceSpan]:
         rows = self._rows(
@@ -191,9 +205,7 @@ class ClickHouseCollector(TraceCollector):
         return spans
 
     def get_span(self, span_id: str) -> Optional[TraceSpan]:
-        rows = self._rows(
-            "SELECT * FROM spans FINAL WHERE span_id = {sid:String}", {"sid": span_id}
-        )
+        rows = self._rows("SELECT * FROM spans FINAL WHERE span_id = {sid:String}", {"sid": span_id})
         if not rows:
             return None
         span = self._deserialize_span(rows[0])
@@ -245,9 +257,7 @@ class ClickHouseCollector(TraceCollector):
             params["since"] = since
 
         where = " AND ".join(conditions) if conditions else "1 = 1"
-        rows = self._rows(
-            f"SELECT * FROM spans FINAL WHERE {where} ORDER BY started_at", params
-        )
+        rows = self._rows(f"SELECT * FROM spans FINAL WHERE {where} ORDER BY started_at", params)
         spans = [self._deserialize_span(r) for r in rows]
         children_by_parent: dict[Optional[str], list[str]] = {}
         for s in spans:

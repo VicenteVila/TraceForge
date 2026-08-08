@@ -19,14 +19,20 @@ console = Console()
 @app.callback()
 def _main(
     collector: Optional[str] = typer.Option(
-        None, "--collector", "-c",
+        None,
+        "--collector",
+        "-c",
         help="Backend: memory, sqlite, postgres, clickhouse",
     ),
     db_path: Optional[str] = typer.Option(
-        None, "--db-path", help="Ruta SQLite o DSN alternativo",
+        None,
+        "--db-path",
+        help="Ruta SQLite o DSN alternativo",
     ),
     dsn: Optional[str] = typer.Option(
-        None, "--dsn", help="DSN para postgres o clickhouse",
+        None,
+        "--dsn",
+        help="DSN para postgres o clickhouse",
     ),
 ):
     if not (collector or db_path or dsn):
@@ -152,14 +158,16 @@ def list_traces(
     rows = []
     for tid in reversed(trace_ids):
         spans = _collector.get_trace(tid)
-        rows.append({
-            "trace_id": tid,
-            "spans": len(spans),
-            "duration_ms": sum(s.duration_ms for s in spans),
-            "tokens": sum(s.tokens_input + s.tokens_output for s in spans),
-            "cost_usd": round(sum(s.cost_usd for s in spans), 6),
-            "errors": sum(1 for s in spans if s.status == "error"),
-        })
+        rows.append(
+            {
+                "trace_id": tid,
+                "spans": len(spans),
+                "duration_ms": sum(s.duration_ms for s in spans),
+                "tokens": sum(s.tokens_input + s.tokens_output for s in spans),
+                "cost_usd": round(sum(s.cost_usd for s in spans), 6),
+                "errors": sum(1 for s in spans if s.status == "error"),
+            }
+        )
 
     if json_output:
         console.print(json.dumps(rows, indent=2, default=str))
@@ -235,15 +243,17 @@ def stats(
         durations = sorted(data["durations"])
         p95 = _percentile(durations, 0.95)
         avg = sum(durations) / len(durations) if durations else 0
-        rows.append({
-            "agent": agt,
-            "spans": data["spans"],
-            "tokens": data["tokens"],
-            "cost_usd": round(data["cost"], 6),
-            "errors": data["errors"],
-            "avg_duration_ms": round(avg, 2),
-            "p95_duration_ms": p95,
-        })
+        rows.append(
+            {
+                "agent": agt,
+                "spans": data["spans"],
+                "tokens": data["tokens"],
+                "cost_usd": round(data["cost"], 6),
+                "errors": data["errors"],
+                "avg_duration_ms": round(avg, 2),
+                "p95_duration_ms": p95,
+            }
+        )
 
     if json_output:
         console.print(json.dumps(rows, indent=2, default=str))
@@ -275,10 +285,8 @@ def stats(
 @app.command()
 def report(
     trace_id: str,
-    output: str = typer.Option("traceforge_report.html", "--output", "-o",
-                               help="Archivo de salida"),
-    fmt: str = typer.Option("html", "--format", "-f",
-                            help="Formato: html, json, markdown"),
+    output: str = typer.Option("traceforge_report.html", "--output", "-o", help="Archivo de salida"),
+    fmt: str = typer.Option("html", "--format", "-f", help="Formato: html, json, markdown"),
 ):
     try:
         from .reporting import generate_report
@@ -302,10 +310,8 @@ def report(
 @app.command()
 def export(
     fmt: str = typer.Option("otel", "--format", "-f", help="Formato de exportación"),
-    since_days: Optional[int] = typer.Option(None, "--since", "-s",
-                                              help="Exportar desde hace N días"),
-    trace_id: Optional[str] = typer.Option(None, "--trace-id", "-t",
-                                            help="Exportar una traza específica"),
+    since_days: Optional[int] = typer.Option(None, "--since", "-s", help="Exportar desde hace N días"),
+    trace_id: Optional[str] = typer.Option(None, "--trace-id", "-t", help="Exportar una traza específica"),
 ):
     _collector = _get_default_collector()
 
@@ -351,21 +357,23 @@ def export(
 
         data = []
         for s in spans:
-            data.append({
-                "span_id": s.span_id,
-                "trace_id": s.trace_id,
-                "parent_id": s.parent_id,
-                "agent": s.agent,
-                "model": s.model,
-                "status": s.status,
-                "duration_ms": s.duration_ms,
-                "tokens_input": s.tokens_input,
-                "tokens_output": s.tokens_output,
-                "cost_usd": s.cost_usd,
-                "error": s.error,
-                "input_truncated": s.input_truncated,
-                "output_truncated": s.output_truncated,
-            })
+            data.append(
+                {
+                    "span_id": s.span_id,
+                    "trace_id": s.trace_id,
+                    "parent_id": s.parent_id,
+                    "agent": s.agent,
+                    "model": s.model,
+                    "status": s.status,
+                    "duration_ms": s.duration_ms,
+                    "tokens_input": s.tokens_input,
+                    "tokens_output": s.tokens_output,
+                    "cost_usd": s.cost_usd,
+                    "error": s.error,
+                    "input_truncated": s.input_truncated,
+                    "output_truncated": s.output_truncated,
+                }
+            )
 
         output = json.dumps(data, indent=2, default=str)
         console.print(output)
@@ -379,7 +387,10 @@ def query(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Filtrar por agente"),
     status: Optional[str] = typer.Option(None, "--status", "-s", help="Filtrar por estado"),
     min_duration_ms: Optional[int] = typer.Option(
-        None, "--min-duration", "-d", help="Duración mínima (ms)",
+        None,
+        "--min-duration",
+        "-d",
+        help="Duración mínima (ms)",
     ),
     since_days: Optional[int] = typer.Option(None, "--since", help="Días hacia atrás"),
     limit: int = typer.Option(50, "--limit", "-n", help="Máximo de spans a mostrar"),
@@ -391,8 +402,10 @@ def query(
         since = datetime.now() - timedelta(days=since_days)
 
     spans = _collector.query(
-        agent=agent, status=status,
-        min_duration_ms=min_duration_ms, since=since,
+        agent=agent,
+        status=status,
+        min_duration_ms=min_duration_ms,
+        since=since,
     )
     if limit > 0:
         spans = list(reversed(spans[-limit:]))

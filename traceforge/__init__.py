@@ -32,11 +32,7 @@ def configure(
     max_list_items: Optional[int] = None,
 ) -> None:
     global _collector
-    if (
-        max_input_len is not None
-        or max_output_len is not None
-        or max_list_items is not None
-    ):
+    if max_input_len is not None or max_output_len is not None or max_list_items is not None:
         set_truncation_limits(
             max_input_len=max_input_len,
             max_output_len=max_output_len,
@@ -46,6 +42,7 @@ def configure(
 
     if auto_trace:
         from .auto import instrument
+
         instrument()
 
     if hasattr(_collector, "close"):
@@ -53,18 +50,22 @@ def configure(
 
     if collector == "sqlite":
         from .collector.sqlite import SQLiteCollector
+
         _collector = SQLiteCollector(db_path or "traces.db")
     elif collector == "memory":
         _collector = MemoryCollector()
     elif collector == "postgres":
         from .collector.postgres import PostgresCollector
+
         _collector = PostgresCollector(dsn or db_path or "postgresql://localhost/traceforge")
     elif collector == "clickhouse":
         from .collector.clickhouse import ClickHouseCollector
+
         _collector = ClickHouseCollector(dsn or db_path or "http://localhost:8123/default")
     elif collector == "otel":
         try:
             from .collector.otel import OTELCollector
+
             _collector = OTELCollector()
         except ImportError:
             raise ImportError("OpenTelemetry support requires opentelemetry-api")
@@ -104,6 +105,7 @@ def init(
     )
     if auto_instrument:
         from .auto import instrument as _instrument
+
         return _instrument(collector=_collector, providers=auto_instrument)
     return {}
 
@@ -130,6 +132,7 @@ def report(
     output: Optional[str] = None,
 ) -> str:
     from .reporting import generate_report
+
     return generate_report(trace_id, format=format, output=output, collector=_collector)
 
 
@@ -139,9 +142,11 @@ def show(
 ) -> None:
     if format == "tree":
         from .cli import show_trace
+
         show_trace(trace_id, collector=_collector)
     elif format == "json":
         from .reporting import generate_report
+
         print(generate_report(trace_id, format="json", collector=_collector))
     else:
         raise ValueError(f"Unsupported format: {format}. Supported: tree, json")
@@ -153,6 +158,7 @@ def get_last_trace_id() -> Optional[str]:
 
 def refresh_prices(*args, **kwargs):
     from .pricing import refresh_prices as _refresh
+
     return _refresh(*args, **kwargs)
 
 
@@ -168,6 +174,7 @@ def instrument(
     providers: Optional[list[str]] = None,
 ) -> dict[str, bool]:
     from .auto import instrument as _instrument
+
     return _instrument(collector=collector, providers=providers)
 
 
