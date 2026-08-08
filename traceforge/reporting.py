@@ -332,6 +332,10 @@ def generate_report(
 
     spans_by_id = {s.span_id: s for s in raw_spans}
 
+    for s in raw_spans:
+        if s.parent_id and s.parent_id in spans_by_id and s.span_id not in spans_by_id[s.parent_id].children:
+            spans_by_id[s.parent_id].children.append(s.span_id)
+
     roots = [s for s in raw_spans if s.parent_id is None]
     flat: list[dict[str, Any]] = []
     for root in roots:

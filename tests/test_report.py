@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 
@@ -97,3 +98,42 @@ def test_report_html_shows_truncation_badge(collector, trace_id):
     result = generate_report(trace_id, format="html", collector=collector)
     assert "truncated-tag" in result
     assert "truncated" in result
+
+
+def test_report_reconstructs_tree_when_children_empty():
+    """Regression: spans persisted without a populated `children` list (e.g. old
+    sqlite rows) must still render the full tree via parent_id."""
+    from traceforge.core import TraceSpan
+
+    c = MemoryCollector()
+    now = datetime.now()
+    root = TraceSpan(agent="orchestrator", started_at=now, finished_at=now, status="ok")
+    kids = [
+        TraceSpan(
+            agent="scoping",
+            parent_id=root.span_id,
+            trace_id=root.trace_id,
+            started_at=now,
+            finished_at=now,
+            status="ok",
+        ),
+        TraceSpan(
+            agent="developer",
+            parent_id=root.span_id,
+            trace_id=root.trace_id,
+            started_at=now,
+            finished_at=now,
+            status="ok",
+        ),
+    ]
+    all_spans = [root, *kids]
+    with c._lock:
+        c._spans = {s.span_id: s for s in all_spans}
+        c._traces[root.trace_id] = [s.span_id for s in all_spans]
+        c._trace_order = [root.trace_id]
+
+    assert root.children == []
+    data = json.loads(generate_report(root.trace_id, format="json", collector=c))
+    assert data["total_spans"] == 3
+    agents = {s["agent"] for s in data["spans"]}
+    assert agents == {"orchestrator", "scoping", "developer"}
