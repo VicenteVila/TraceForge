@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -108,3 +109,75 @@ def test_clear(collector):
     collector.clear()
     assert collector.get_last_trace_id() is None
     assert collector.get_trace(s.trace_id) == []
+
+
+def test_parent_saved_after_child_links_children(collector):
+    root = TraceSpan(agent="root")
+    child = TraceSpan(agent="child", parent_id=root.span_id, trace_id=root.trace_id)
+    collector.save(child)
+
+    collector.save(root)
+
+    assert root.children == [child.span_id]
+
+
+def test_sibling_parents_linked_independently(collector):
+    root = TraceSpan(agent="root")
+    collector.save(root)
+
+    first = TraceSpan(agent="a", parent_id=root.span_id, trace_id=root.trace_id)
+    collector.save(first)
+
+    second = TraceSpan(agent="b", parent_id=root.span_id, trace_id=root.trace_id)
+    collector.save(second)
+
+    assert set(root.children) == {first.span_id, second.span_id}
+
+
+def test_concurrent_saves_from_multiple_threads():
+    collector = MemoryCollector()
+    errors: list[Exception] = []
+
+    def worker(n: int) -> None:
+        try:
+            for i in range(50):
+                s = TraceSpan(agent=f"w{n}", model=f"m{i}")
+                collector.save(s)
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(collector.list_traces(limit=1000)) == 8 * 50
+
+
+def test_concurrent_parent_child_linking():
+    collector = MemoryCollector()
+    root = TraceSpan(agent="root")
+    collector.save(root)
+    errors: list[Exception] = []
+
+    def worker(n: int) -> None:
+        try:
+            child = TraceSpan(
+                agent=f"child-{n}", parent_id=root.span_id, trace_id=root.trace_id
+            )
+            collector.save(child)
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(root.children) == 10
+    for cid in root.children:
+        assert collector.get_span(cid).parent_id == root.span_id

@@ -4,7 +4,7 @@ import pytest
 
 from tests.fixtures.sample_traces import make_pipeline_traces
 from traceforge.collector.memory import MemoryCollector
-from traceforge.report import generate_report
+from traceforge.reporting import generate_report
 
 
 @pytest.fixture
@@ -78,3 +78,25 @@ def test_report_stats_accuracy(collector, trace_id):
         for s in collector.get_trace(trace_id)
     )
     assert data["error_count"] == 0
+
+
+def test_report_json_includes_truncation_flags(collector, trace_id):
+    for span in collector.get_trace(trace_id):
+        span.input_truncated = True
+        span.output_truncated = True
+        collector.save(span)
+
+    result = generate_report(trace_id, format="json", collector=collector)
+    data = json.loads(result)
+    assert all(s["input_truncated"] is True for s in data["spans"])
+    assert all(s["output_truncated"] is True for s in data["spans"])
+
+
+def test_report_html_shows_truncation_badge(collector, trace_id):
+    for span in collector.get_trace(trace_id):
+        span.input_truncated = True
+        collector.save(span)
+
+    result = generate_report(trace_id, format="html", collector=collector)
+    assert "truncated-tag" in result
+    assert "truncated" in result

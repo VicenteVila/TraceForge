@@ -1,7 +1,6 @@
 from typing import Any, Optional
 
-from .collector.memory import MemoryCollector
-from .core import TraceSpan
+from .core import TraceCollector, TraceSpan
 from .decorator import _get_default_collector
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -28,6 +27,8 @@ tr:hover td { background: #1e293b; }
 .status-ok { color: #22c55e; }
 .status-error { color: #ef4444; }
 .agent-tag { display: inline-block; background: #334155; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #94a3b8; }
+.truncated-tag { display: inline-block; background: #78350f; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #fbbf24; }
+.stream-tag { margin-top: 4px; font-size: 11px; color: #22d3ee; }
 </style>
 </head>
 <body>
@@ -70,6 +71,7 @@ tr:hover td { background: #1e293b; }
         <th>Duration</th>
         <th>Tokens</th>
         <th>Cost</th>
+        <th>Data</th>
         <th>Error</th>
       </tr>
     </thead>
@@ -81,8 +83,18 @@ tr:hover td { background: #1e293b; }
         <td>{{ span.model or '-' }}</td>
         <td class="status-{{ span.status }}">{{ '✓' if span.status == 'ok' else '✗' }}</td>
         <td>{{ span.duration_ms }}ms</td>
-        <td>{{ span.tokens_input + span.tokens_output }}</td>
+        <td>
+          {{ span.tokens_input + span.tokens_output }}
+          {% if span.stream %}
+            <div class="stream-tag">⏱ TTFT {{ "%.0f"|format(span.ttft_ms) }}ms · {{ span.throughput_tps }} tok/s · {{ span.stream_chunks }} chunks</div>
+          {% endif %}
+        </td>
         <td>${{ "%.4f"|format(span.cost_usd) }}</td>
+        <td>
+          {% if span.input_truncated or span.output_truncated %}
+            <span class="truncated-tag">⚠ {{ 'input' if span.input_truncated }}{{ ', output' if span.output_truncated }} truncated</span>
+          {% else %} - {% endif %}
+        </td>
         <td style="color: #ef4444; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">{{ span.error or '' }}</td>
       </tr>
     {% endfor %}
@@ -121,6 +133,13 @@ def _build_span_tree_data(
         "tokens_output": span.tokens_output,
         "cost_usd": span.cost_usd,
         "error": span.error or "",
+        "input_truncated": span.input_truncated,
+        "output_truncated": span.output_truncated,
+        "stream": span.stream,
+        "ttft_ms": span.ttft_ms,
+        "stream_chunks": span.stream_chunks,
+        "chunk_offsets_ms": span.chunk_offsets_ms,
+        "throughput_tps": round(span.throughput_tps, 1) if span.throughput_tps else 0,
         "started_at": span.started_at,
         "finished_at": span.finished_at or span.started_at,
         "depth": depth,
@@ -296,7 +315,7 @@ def generate_report(
     trace_id: str,
     format: str = "html",
     output: Optional[str] = None,
-    collector: Optional[MemoryCollector] = None,
+    collector: Optional[TraceCollector] = None,
 ) -> str:
     _collector = collector or _get_default_collector()
     raw_spans = _collector.get_trace(trace_id)
@@ -342,15 +361,19 @@ def generate_report(
             f"- **Cost:** ${total_cost:.4f}",
             f"- **Errors:** {error_count}",
             "",
-            "| Agent | Model | Status | Duration | Tokens | Cost |",
-            "|-------|-------|--------|----------|--------|------|",
+            "| Agent | Model | Status | Duration | Tokens | Cost | Stream |",
+            "|-------|-------|--------|----------|--------|------|--------|",
         ]
         for s in flat:
             status_char = "✓" if s["status"] == "ok" else "✗"
+            stream_note = "-"
+            if s["stream"]:
+                ttft = f"{s['ttft_ms']:.0f}ms" if s["ttft_ms"] is not None else "-"
+                stream_note = f"⏱ TTFT {ttft} · {s['throughput_tps']} tok/s"
             lines.append(
                 f"| {s['agent']} | {s['model'] or '-'} | {status_char} "
                 f"| {s['duration_ms']}ms | {s['tokens_input'] + s['tokens_output']} "
-                f"| ${s['cost_usd']:.4f} |"
+                f"| ${s['cost_usd']:.4f} | {stream_note} |"
             )
         result = "\n".join(lines)
         if output:
@@ -361,7 +384,7 @@ def generate_report(
     try:
         from jinja2 import Template
     except ImportError:
-        raise ImportError("HTML report requires jinja2: pip install traceforge[jinja2]")
+        raise ImportError("HTML report requires jinja2: pip install traceforge")
 
     gantt_json = _build_gantt(flat, spans_by_id)
     sankey_json = _build_sankey(flat)

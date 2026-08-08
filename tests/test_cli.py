@@ -4,9 +4,23 @@ import pytest
 from typer.testing import CliRunner
 
 from traceforge import trace
-from traceforge.cli import app
+from traceforge.cli import _percentile, app
 from traceforge.collector.memory import MemoryCollector
 from traceforge.decorator import set_default_collector
+
+
+def test_percentile_basic():
+    values = [10, 20, 30, 40]
+    assert _percentile(values, 0.95) == 40
+    assert _percentile(values, 0.5) == 20
+
+
+def test_percentile_single_value():
+    assert _percentile([100], 0.95) == 100
+
+
+def test_percentile_empty():
+    assert _percentile([], 0.95) == 0
 
 
 @pytest.fixture

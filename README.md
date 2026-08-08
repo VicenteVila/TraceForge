@@ -54,6 +54,10 @@ Traditional logs don't connect causes. TraceForge links every step with a **pers
 - ✅ CLI with Rich tree output and HTML reports (Markdown/JSON also supported)
 - ✅ OpenTelemetry export
 - ✅ Async support with contextvars for concurrent traces
+- ✅ Streaming metrics (TTFT, token throughput, per-chunk latency)
+- ✅ Automatic PII masking (emails, phones, credit cards, IPs, + optional NER)
+- ✅ One-line `init()` for auto-instrumentation of OpenAI/Anthropic/LangChain/LlamaIndex
+- ✅ Live price refresh from LiteLLM with local cache
 
 ---
 
@@ -68,6 +72,8 @@ With extras:
 ```bash
 pip install "traceforge[plotly] @ git+https://github.com/VicenteVila/TraceForge.git"   # HTML reports with Gantt charts
 pip install "traceforge[otel] @ git+https://github.com/VicenteVila/TraceForge.git"     # OpenTelemetry export
+pip install "traceforge[postgres] @ git+https://github.com/VicenteVila/TraceForge.git" # PostgreSQL backend
+pip install "traceforge[clickhouse] @ git+https://github.com/VicenteVila/TraceForge.git" # ClickHouse backend
 pip install "traceforge[dev] @ git+https://github.com/VicenteVila/TraceForge.git"      # development (pytest, ruff)
 ```
 
@@ -82,6 +88,20 @@ pip install -e .
 ---
 
 ## Quickstart
+
+### 0. One-line activation
+
+Activate tracing, collectors and auto-instrumentation in a single call:
+
+```python
+import traceforge
+
+traceforge.init(auto_instrument=["openai", "langchain"])
+```
+
+This configures the default collector, enables automatic PII masking, and
+monkey-patches the installed SDKs you listed. The rest of the quickstart uses
+the explicit building blocks.
 
 ### 1. Basic decorator
 
@@ -156,7 +176,8 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 
 | Function | Description |
 |---|---|
-| `configure(collector, db_path)` | Set backend (memory, sqlite, otel) |
+| `init(auto_instrument, collector, db_path, dsn, ...)` | One-line activation: configure + instrument providers |
+| `configure(collector, db_path, dsn, max_input_len, redact_pii, ...)` | Set backend and capture limits (memory, sqlite, postgres, clickhouse, otel) |
 | `@trace(agent, model, tags)` | Decorate functions for automatic tracing |
 | `span(agent, model, tags)` | Context manager for inline code blocks |
 | `query(trace_id, agent, status, ...)` | Search spans with filters |
@@ -164,6 +185,8 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 | `show(trace_id)` | Print trace tree to terminal |
 | `get_last_trace_id()` | Return the last generated trace_id |
 | `list_traces(limit)` | List recent trace_ids |
+| `set_truncation_limits(max_input_len, max_output_len, max_list_items)` | Adjust capture limits at runtime (0 disables) |
+| `instrument()` | Enable auto-instrumentation for installed SDKs (returns `{provider: bool}`) |
 
 ---
 
@@ -194,7 +217,159 @@ traceforge export --format otel --since 7     # export to OpenTelemetry
 | **Qwen** | 2.5-72b, 2.5-coder-32b |
 | **Cohere** | Command R / R+ |
 
-Missing a model? Open an issue or add it in `traceforge/pricing.py`.
+Missing a model? Open an issue, add it in `traceforge/pricing.py`, or refresh prices from LiteLLM:
+
+```python
+import traceforge
+
+traceforge.refresh_prices()                       # fetch latest catalog from LiteLLM
+traceforge.refresh_prices(url="https://your-api/prices.json")  # or your own pricing API
+```
+
+Refreshed prices are cached locally (default `~/.cache/traceforge/pricing_cache.json`)
+and merged into cost calculations automatically on the next run. Pass `cache_path=`
+to override the location.
+
+---
+
+## Data capture limits
+
+Inputs and outputs are captured with size limits to keep traces lean, but data loss is **never silent**:
+
+- A `RuntimeWarning` is emitted whenever truncation happens.
+- Every span records `input_truncated` / `output_truncated` flags, persisted in SQLite and shown as a `⚠ truncated` marker in the CLI tree and HTML reports.
+- Limits are configurable and can be disabled entirely:
+
+```python
+import traceforge
+
+# Defaults: input 2000 chars, output 5000 chars, 10 list items
+traceforge.configure(collector="sqlite", db_path="traces.db",
+                     max_input_len=10_000, max_output_len=20_000,
+                     max_list_items=50)
+
+# Or at runtime (0 = unlimited)
+traceforge.set_truncation_limits(max_input_len=0, max_output_len=0)
+```
+
+---
+
+## PII masking
+
+Captured inputs and outputs are masked by default so emails, phone numbers,
+credit cards, SSNs and IPv4 addresses never land in your traces:
+
+```python
+import traceforge
+
+traceforge.configure(redact_pii=False)      # opt out
+traceforge.set_pii_masker(enabled=True)     # re-enable at runtime
+```
+
+- Masking is applied after truncation, recursively over args, kwargs, messages and outputs.
+- A match is replaced by its label (`<email>`, `<phone>`, `<credit_card>`, ...), keeping the structure intact.
+- **Optional NER**: `traceforge.set_pii_masker(use_ner=True)` enables a lightweight spaCy pass (`en_core_web_sm`) to catch names and other entities regexes miss.
+- Custom patterns: `traceforge.set_pii_masker(patterns={"internal_id": r"ID-\d{5}"})`.
+
+---
+
+## Production backends (PostgreSQL / ClickHouse)
+
+For multi-instance or high-volume deployments, SQLite can be swapped for a real
+database. Both are self-hosted, open-source and free — the repo ships a
+`docker-compose.yml` to run them locally with zero cost:
+
+```bash
+docker compose up -d
+```
+
+Then point TraceForge at them:
+
+```python
+import traceforge
+
+# PostgreSQL (psycopg)
+traceforge.configure(collector="postgres", dsn="postgresql://traceforge:traceforge@localhost:5432/traceforge")
+
+# ClickHouse (clickhouse-connect, HTTP)
+traceforge.configure(collector="clickhouse", dsn="http://localhost:8123/traceforge")
+```
+
+- **PostgreSQL** mirrors the SQLite schema (upsert + atomic parent-child linking) and is the drop-in choice for teams.
+- **ClickHouse** is append-only: spans live in a `ReplacingMergeTree` and the parent-child tree is reconstructed at read time, which keeps writes cheap at high volume.
+- Both implement the full `TraceCollector` interface, so `query()`, `report()`, `show()` and the CLI work unchanged.
+- Install the drivers per backend: `pip install traceforge[postgres]` or `traceforge[clickhouse]` (the core stays dependency-free).
+- Integration tests run only when a server is available:
+
+```bash
+TRACEFORGE_TEST_PG_DSN="postgresql://traceforge:traceforge@localhost:5432/traceforge" pytest tests/test_integration_postgres.py
+TRACEFORGE_TEST_CH_URL="http://localhost:8123/traceforge" pytest tests/test_integration_clickhouse.py
+```
+
+---
+
+## Auto-instrumentation
+
+Instead of decorating every call, let TraceForge hook into your LLM SDK. Calls made through the patched API produce spans automatically, including model and token usage:
+
+```python
+import traceforge
+
+# auto_trace instruments whatever is installed (openai, anthropic) at configure() time
+traceforge.configure(collector="sqlite", db_path="traces.db", auto_trace=True)
+```
+
+Or instrument on demand:
+
+```python
+from traceforge.auto import instrument
+
+results = instrument()          # {openai: True, anthropic: False} if only openai is installed
+```
+
+It also supports scoping to a single client and a custom agent label:
+
+```python
+from openai import OpenAI
+from traceforge.auto import instrument_openai
+
+client = OpenAI()
+instrument_openai(client=client, agent="openai_call")
+```
+
+Errors raised by the SDK are captured on the span (status `error`) and re-raised to your code.
+
+The **full prompt** is captured on `span.input` — the entire `messages` list (system + user turns) or `prompt` sent to the SDK — not just function arguments, and it goes through the same truncation and PII masking as any other input.
+
+**Framework callbacks** are provided for LangChain/LangGraph (`TraceForgeLangChainHandler`) and LlamaIndex (`TraceForgeLlamaIndexHandler`) `CallbackHandler` interfaces. They can also be registered globally from `init()` or `instrument(providers=["langchain", "llamaindex"])`.
+
+### Streaming
+
+Streaming calls (`stream=True`) are traced transparently. The span stays open while you consume the stream and records the metrics you need to reason about perceived latency:
+
+```python
+client = OpenAI()
+instrument_openai(client=client)
+
+stream = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "hello"}],
+    stream=True,
+    stream_options={"include_usage": True},   # gives exact token counts
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content, end="")  # chunks are untouched
+```
+
+When the stream finishes, the span contains:
+
+- **`ttft_ms`** — time-to-first-token (ms from request to first chunk).
+- **`chunk_offsets_ms`** — cumulative arrival offset of each chunk (per-token latency).
+- **`stream_chunks`** — number of chunks received.
+- **`throughput_tps`** — output tokens per second, derived from duration.
+- **`tokens_input` / `tokens_output`** — exact when the SDK reports usage (e.g. OpenAI `stream_options={"include_usage": True}`, Anthropic `message_delta`); otherwise output tokens are estimated.
+
+`with client.chat.completions.create(...)` and `async for` (AsyncOpenAI/AsyncAnthropic) work too; errors raised mid-stream mark the span as `error`.
 
 ---
 
@@ -248,7 +423,7 @@ class MyCollector(TraceCollector):
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 68 tests
+pytest          # 169 unit tests (179 with live-DB integration suites)
 ruff check .    # zero errors
 ```
 

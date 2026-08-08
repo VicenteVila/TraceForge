@@ -1,0 +1,42 @@
+# Zero-cost local observability stack for TraceForge.
+#   docker compose up -d
+# Then point TraceForge at it:
+#   traceforge.configure(collector="postgres", dsn="postgresql://traceforge:traceforge@localhost:5432/traceforge")
+#   traceforge.configure(collector="clickhouse", dsn="http://localhost:8123/traceforge")
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: traceforge-postgres
+    environment:
+      POSTGRES_DB: traceforge
+      POSTGRES_USER: traceforge
+      POSTGRES_PASSWORD: traceforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traceforge -d traceforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: traceforge-clickhouse
+    environment:
+      CLICKHOUSE_USER: traceforge
+      CLICKHOUSE_PASSWORD: traceforge
+    ports:
+      - "8123:8123"   # HTTP (clickhouse-connect)
+      - "9000:9000"   # native TCP
+    volumes:
+      - chdata:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+volumes:
+  pgdata: {}
+  chdata: {}

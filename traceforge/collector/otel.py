@@ -1,7 +1,51 @@
+import hashlib
+import random
+import threading
 from datetime import datetime
 from typing import Optional
 
 from ..core import TraceCollector, TraceSpan
+
+
+def _to_ns(dt: datetime) -> int:
+    return int(dt.timestamp() * 1e9)
+
+
+def _otel_trace_id(trace_id: str) -> int:
+    return int(trace_id.replace("-", ""), 16)
+
+
+def _otel_span_id(span_id: str) -> int:
+    digest = hashlib.sha256(span_id.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+class _DeterministicIdGenerator:
+    """OTel IdGenerator that lets callers force specific trace/span ids.
+
+    OTel span ids are 64-bit by spec, so a 128-bit TraceForge uuid must be
+    reduced; hashing (instead of prefix truncation) keeps the 64-bit values
+    well-distributed to avoid collisions. Forcing the id ensures the exported
+    span carries the same id the parent references, keeping the tree intact.
+    """
+
+    def __init__(self) -> None:
+        self._pending_span_id = threading.local()
+        self._pending_trace_id = threading.local()
+
+    def generate_trace_id(self) -> int:
+        pending = getattr(self._pending_trace_id, "value", None)
+        if pending is not None:
+            self._pending_trace_id.value = None
+            return pending
+        return random.getrandbits(128)
+
+    def generate_span_id(self) -> int:
+        pending = getattr(self._pending_span_id, "value", None)
+        if pending is not None:
+            self._pending_span_id.value = None
+            return pending
+        return random.getrandbits(64)
 
 
 class OTELCollector(TraceCollector):
@@ -13,22 +57,23 @@ class OTELCollector(TraceCollector):
         self._service_name = service_name
         self._tracer_provider = None
         self._tracer = None
+        self._id_generator = None
 
     def _ensure_tracer(self):
         if self._tracer is not None:
             return
         try:
-            from opentelemetry import trace
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-            provider = TracerProvider()
+            self._id_generator = _DeterministicIdGenerator()
+            provider = TracerProvider(id_generator=self._id_generator)
             if self._endpoint:
                 exporter = OTLPSpanExporter(endpoint=self._endpoint)
                 provider.add_span_processor(BatchSpanProcessor(exporter))
-            trace.set_tracer_provider(provider)
-            self._tracer = trace.get_tracer(self._service_name)
+            self._tracer_provider = provider
+            self._tracer = provider.get_tracer(self._service_name)
         except ImportError:
             raise ImportError(
                 "OpenTelemetry export requires: opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp"
@@ -54,53 +99,55 @@ class OTELCollector(TraceCollector):
             from opentelemetry import trace
             from opentelemetry.trace import SpanKind, Status, StatusCode
 
-            otel_trace_id = int(span.trace_id.replace("-", "")[:32].ljust(32, "0"), 16)
-            otel_span_id = int(span.span_id.replace("-", "")[:16].ljust(16, "0"), 16)
-            otel_parent_id = None
-            if span.parent_id:
-                otel_parent_id = int(span.parent_id.replace("-", "")[:16].ljust(16, "0"), 16)
+            otel_trace_id = _otel_trace_id(span.trace_id)
+            otel_span_id = _otel_span_id(span.span_id)
 
-            context = trace.SpanContext(
-                trace_id=otel_trace_id,
-                span_id=otel_span_id,
-                is_remote=False,
-                trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
-                trace_state=trace.TraceState(),
-            )
+            trace_flags = trace.TraceFlags(trace.TraceFlags.SAMPLED)
             parent_context = None
-            if otel_parent_id:
-                parent_context = trace.SpanContext(
+            if span.parent_id:
+                parent_span_context = trace.SpanContext(
                     trace_id=otel_trace_id,
-                    span_id=otel_parent_id,
+                    span_id=_otel_span_id(span.parent_id),
                     is_remote=False,
-                    trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
+                    trace_flags=trace_flags,
                     trace_state=trace.TraceState(),
                 )
+                parent_context = trace.set_span_in_context(trace.NonRecordingSpan(parent_span_context))
 
-            with self._tracer.start_as_current_span(
-                name=span.agent,
-                context=trace.set_span_in_context(
-                    trace.NonRecordingSpan(context),
-                    parent_context and trace.set_span_in_context(trace.NonRecordingSpan(parent_context)),
-                ),
-                kind=SpanKind.INTERNAL,
-            ) as otel_span:
-                otel_span.set_attribute("agent", span.agent)
-                if span.model:
-                    otel_span.set_attribute("model", span.model)
-                otel_span.set_attribute("tokens_input", span.tokens_input)
-                otel_span.set_attribute("tokens_output", span.tokens_output)
-                otel_span.set_attribute("cost_usd", span.cost_usd)
-                otel_span.set_attribute("duration_ms", span.duration_ms)
-                if span.error:
-                    otel_span.set_attribute("error", span.error)
-                if span.tags:
-                    otel_span.set_attribute("tags", ",".join(span.tags))
+            if self._id_generator is not None:
+                self._id_generator._pending_trace_id.value = otel_trace_id
+                self._id_generator._pending_span_id.value = otel_span_id
+            try:
+                otel_span = self._tracer.start_span(
+                    name=span.agent,
+                    context=parent_context,
+                    kind=SpanKind.INTERNAL,
+                    start_time=_to_ns(span.started_at),
+                )
+            finally:
+                if self._id_generator is not None:
+                    self._id_generator._pending_trace_id.value = None
+                    self._id_generator._pending_span_id.value = None
 
-                if span.status == "error":
-                    otel_span.set_status(Status(StatusCode.ERROR, span.error or "unknown error"))
-                else:
-                    otel_span.set_status(Status(StatusCode.OK))
+            otel_span.set_attribute("agent", span.agent)
+            if span.model:
+                otel_span.set_attribute("model", span.model)
+            otel_span.set_attribute("tokens_input", span.tokens_input)
+            otel_span.set_attribute("tokens_output", span.tokens_output)
+            otel_span.set_attribute("cost_usd", span.cost_usd)
+            otel_span.set_attribute("duration_ms", span.duration_ms)
+            otel_span.set_attribute("input_truncated", span.input_truncated)
+            otel_span.set_attribute("output_truncated", span.output_truncated)
+            if span.error:
+                otel_span.set_attribute("error", span.error)
+            if span.tags:
+                otel_span.set_attribute("tags", ",".join(span.tags))
+
+            if span.status == "error":
+                otel_span.set_status(Status(StatusCode.ERROR, span.error or "unknown error"))
+            else:
+                otel_span.set_status(Status(StatusCode.OK))
+            otel_span.end(end_time=_to_ns(span.finished_at or span.started_at))
         except ImportError:
             pass
 

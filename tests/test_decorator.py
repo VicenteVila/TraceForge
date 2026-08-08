@@ -1,7 +1,10 @@
+import warnings
+
 import pytest
 
 from traceforge import trace
 from traceforge.collector.memory import MemoryCollector
+from traceforge.core import TraceCollector, TraceSpan
 
 
 @pytest.fixture
@@ -106,3 +109,90 @@ def test_independent_calls_have_different_trace_ids(mem_collector):
     trace_b = mem_collector.get_last_trace_id()
 
     assert trace_a != trace_b
+
+
+def test_large_input_flagged_and_warns(mem_collector):
+    @trace(agent="big_input", collector=mem_collector)
+    def consume(data: str):
+        return "ok"
+
+    with pytest.warns(RuntimeWarning, match="truncated captured input"):
+        consume("x" * 5000)
+
+    spans = mem_collector.get_trace(mem_collector.get_last_trace_id())
+    assert spans[0].input_truncated is True
+    assert spans[0].output_truncated is False
+
+
+def test_large_output_flagged_and_warns(mem_collector):
+    @trace(agent="big_output", collector=mem_collector)
+    def produce():
+        return "y" * 6000
+
+    with pytest.warns(RuntimeWarning, match="truncated captured output"):
+        produce()
+
+    spans = mem_collector.get_trace(mem_collector.get_last_trace_id())
+    assert spans[0].output_truncated is True
+    assert spans[0].input_truncated is False
+
+
+def test_small_io_not_flagged(mem_collector):
+    @trace(agent="small_io", collector=mem_collector)
+    def f(data: str):
+        return data
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        f("hello")
+
+    assert not recorded
+    spans = mem_collector.get_trace(mem_collector.get_last_trace_id())
+    assert spans[0].input_truncated is False
+    assert spans[0].output_truncated is False
+
+
+def test_span_saved_exactly_once():
+    class CountingCollector(TraceCollector):
+        def __init__(self):
+            self.inner = MemoryCollector()
+            self.save_count = 0
+
+        def save(self, span: TraceSpan) -> None:
+            self.save_count += 1
+            self.inner.save(span)
+
+        def get_trace(self, trace_id: str) -> list[TraceSpan]:
+            return self.inner.get_trace(trace_id)
+
+        def get_span(self, span_id: str):
+            return self.inner.get_span(span_id)
+
+        def list_traces(self, limit: int = 10) -> list[str]:
+            return self.inner.list_traces(limit)
+
+        def get_last_trace_id(self):
+            return self.inner.get_last_trace_id()
+
+        def query(self, **kwargs) -> list[TraceSpan]:
+            return self.inner.query(**kwargs)
+
+    collector = CountingCollector()
+
+    @trace(agent="once", collector=collector)
+    def run():
+        return "ok"
+
+    run()
+    assert collector.save_count == 1
+
+    @trace(agent="err", collector=collector)
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError):
+        boom()
+    assert collector.save_count == 2
+
+    spans = collector.get_trace(collector.get_last_trace_id())
+    assert len(spans) == 1

@@ -1,13 +1,12 @@
 import contextvars
 import functools
 import inspect
-import time
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Optional
 
 from .collector.memory import MemoryCollector
-from .core import TraceSpan, _capture_input, _capture_output
+from .core import TraceCollector, TraceSpan, _capture_input, _capture_output
 
 _current_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("trace_id", default=None)
 _current_parent_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("parent_id", default=None)
@@ -17,7 +16,7 @@ def trace(
     agent: str,
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
-    collector: Optional[MemoryCollector] = None,
+    collector: Optional[TraceCollector] = None,
 ):
     _tags = tags or []
 
@@ -33,7 +32,7 @@ def trace(
                 parent_id = _current_parent_id.get()
                 span_id = str(uuid.uuid4())
 
-                input_data = _capture_input(args, kwargs)
+                input_data, input_truncated = _capture_input(args, kwargs)
 
                 span = TraceSpan(
                     trace_id=trace_id,
@@ -42,6 +41,7 @@ def trace(
                     agent=agent,
                     model=model,
                     input=input_data,
+                    input_truncated=input_truncated,
                     tags=_tags,
                     started_at=datetime.now(),
                 )
@@ -49,12 +49,9 @@ def trace(
                 token_trace = _current_trace_id.set(trace_id)
                 token_parent = _current_parent_id.set(span_id)
 
-                _collector.save(span)
-
                 try:
-                    time.time()
                     result = await func(*args, **kwargs)
-                    span.output = _capture_output(result)
+                    span.output, span.output_truncated = _capture_output(result)
                     span.status = "ok"
                     return result
                 except Exception as e:
@@ -77,7 +74,7 @@ def trace(
                 parent_id = _current_parent_id.get()
                 span_id = str(uuid.uuid4())
 
-                input_data = _capture_input(args, kwargs)
+                input_data, input_truncated = _capture_input(args, kwargs)
 
                 span = TraceSpan(
                     trace_id=trace_id,
@@ -86,6 +83,7 @@ def trace(
                     agent=agent,
                     model=model,
                     input=input_data,
+                    input_truncated=input_truncated,
                     tags=_tags,
                     started_at=datetime.now(),
                 )
@@ -93,12 +91,9 @@ def trace(
                 token_trace = _current_trace_id.set(trace_id)
                 token_parent = _current_parent_id.set(span_id)
 
-                _collector.save(span)
-
                 try:
-                    time.time()
                     result = func(*args, **kwargs)
-                    span.output = _capture_output(result)
+                    span.output, span.output_truncated = _capture_output(result)
                     span.status = "ok"
                     return result
                 except Exception as e:
@@ -116,16 +111,16 @@ def trace(
     return decorator
 
 
-_default_collector: Optional[MemoryCollector] = None
+_default_collector: Optional[TraceCollector] = None
 
 
-def _get_default_collector() -> MemoryCollector:
+def _get_default_collector() -> TraceCollector:
     global _default_collector
     if _default_collector is None:
         _default_collector = MemoryCollector()
     return _default_collector
 
 
-def set_default_collector(collector: MemoryCollector) -> None:
+def set_default_collector(collector: TraceCollector) -> None:
     global _default_collector
     _default_collector = collector

@@ -39,6 +39,15 @@ def test_span_nested_inside_decorator():
     assert inner.trace_id == outer.trace_id
 
 
+def test_span_output_truncation_flagged():
+    collector = MemoryCollector()
+    with pytest.warns(RuntimeWarning, match="truncated captured output"):
+        with span(agent="big_output", collector=collector) as sp:
+            sp.set_output("y" * 6000)
+
+    assert sp.output_truncated is True
+
+
 def test_span_captures_exception():
     collector = MemoryCollector()
     with pytest.raises(RuntimeError):

@@ -1,6 +1,8 @@
 import asyncio
+
 import pytest
-from traceforge import trace, span
+
+from traceforge import span, trace
 from traceforge.collector.memory import MemoryCollector
 
 

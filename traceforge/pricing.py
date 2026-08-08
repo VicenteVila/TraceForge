@@ -1,3 +1,9 @@
+import json
+import urllib.request
+import warnings
+from pathlib import Path
+from typing import Optional
+
 PRICING_TABLE: dict[str, dict[str, float]] = {
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.000300},
     "gemini-1.5-flash-8b": {"input": 0.0000375, "output": 0.000150},
@@ -55,13 +61,93 @@ PRICING_TABLE: dict[str, dict[str, float]] = {
     "command-r-plus": {"input": 0.00060, "output": 0.00240},
 }
 
+LITELLM_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+    "model_prices_and_context_window.json"
+)
+
+_cache_path = Path.home() / ".cache" / "traceforge" / "pricing_cache.json"
+_dynamic_table: dict[str, dict[str, float]] = {}
+
+
+def _load_cache() -> None:
+    global _dynamic_table
+    try:
+        if _cache_path.exists():
+            _dynamic_table = json.loads(_cache_path.read_text())
+    except Exception:
+        _dynamic_table = {}
+
+
+_load_cache()
+
+
+def refresh_prices(
+    source: str = "litellm",
+    url: Optional[str] = None,
+    cache_path: Optional[str] = None,
+    timeout: int = 15,
+) -> int:
+    """Fetch the latest per-model pricing and cache it locally.
+
+    The default ``source="litellm"`` reads LiteLLM's public price catalog
+    (``input_cost_per_token`` / ``output_cost_per_token``, converted to per-1k).
+    Pass a custom ``url`` (e.g. your own pricing API) that returns the same
+    JSON shape. Returns the number of models loaded.
+    """
+    global _cache_path
+    if cache_path is not None:
+        _cache_path = Path(cache_path)
+    fetch_url = url or LITELLM_URL
+    with urllib.request.urlopen(fetch_url, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode())
+
+    merged: dict[str, dict[str, float]] = {}
+    for model, info in data.items():
+        if not isinstance(info, dict):
+            continue
+        input_cost = info.get("input_cost_per_token")
+        output_cost = info.get("output_cost_per_token")
+        if input_cost is None or output_cost is None:
+            continue
+        merged[model] = {
+            "input": float(input_cost) * 1000,
+            "output": float(output_cost) * 1000,
+        }
+
+    if not merged:
+        warnings.warn("No pricing data found in the fetched source", RuntimeWarning)
+        return 0
+
+    global _dynamic_table
+    _dynamic_table = merged
+    try:
+        _cache_path.parent.mkdir(parents=True, exist_ok=True)
+        _cache_path.write_text(json.dumps(merged, indent=2))
+    except OSError:
+        pass
+    return len(merged)
+
+
+def set_pricing_cache_path(path: str) -> None:
+    global _cache_path
+    _cache_path = Path(path)
+    _load_cache()
+
 
 def calculate_cost(model: str | None, tokens_input: int = 0, tokens_output: int = 0) -> float:
-    if not model or model not in PRICING_TABLE:
+    if not model:
         return 0.0
-    rates = PRICING_TABLE[model]
+    rates = PRICING_TABLE.get(model) or _dynamic_table.get(model)
+    if rates is None:
+        warnings.warn(
+            f"No pricing data for model {model!r}; cost set to 0.0",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0.0
     return (tokens_input / 1000 * rates["input"]) + (tokens_output / 1000 * rates["output"])
 
 
 def get_model_list() -> list[str]:
-    return sorted(PRICING_TABLE.keys())
+    return sorted(set(PRICING_TABLE) | set(_dynamic_table))

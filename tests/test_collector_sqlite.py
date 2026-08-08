@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -143,9 +144,109 @@ def test_tags_serialization(collector):
     assert retrieved.tags == ["tag1", "tag2", "tag3"]
 
 
+def test_concurrent_saves_from_multiple_threads(db_path):
+    collector = SQLiteCollector(db_path)
+    errors: list[Exception] = []
+
+    def worker(n: int) -> None:
+        try:
+            for i in range(50):
+                span = TraceSpan(agent=f"agent-{n}", trace_id=f"trace-{n}-{i}")
+                collector.save(span)
+        except Exception as e:  # pragma: no cover - failure path
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    collector.close()
+    assert not errors
+
+    collector = SQLiteCollector(db_path)
+    try:
+        for n in range(8):
+            assert len(collector.query(agent=f"agent-{n}")) == 50
+    finally:
+        collector.close()
+
+
+def test_concurrent_children_linking(db_path):
+    collector = SQLiteCollector(db_path)
+    root = TraceSpan(agent="root")
+    collector.save(root)
+
+    def worker(n: int) -> None:
+        child = TraceSpan(agent=f"child-{n}", parent_id=root.span_id, trace_id=root.trace_id)
+        collector.save(child)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    retrieved = collector.get_span(root.span_id)
+    collector.close()
+    assert retrieved is not None
+    assert len(retrieved.children) == 10
+
+
+def test_truncation_flags_roundtrip(collector):
+    span = TraceSpan(agent="a", input_truncated=True, output_truncated=True)
+    collector.save(span)
+    retrieved = collector.get_span(span.span_id)
+    assert retrieved is not None
+    assert retrieved.input_truncated is True
+    assert retrieved.output_truncated is True
+
+
+def test_truncation_flags_default_false(collector):
+    span = TraceSpan(agent="a")
+    collector.save(span)
+    retrieved = collector.get_span(span.span_id)
+    assert retrieved is not None
+    assert retrieved.input_truncated is False
+    assert retrieved.output_truncated is False
+
+
 def test_children_serialization(collector):
     span = TraceSpan(agent="parent", children=["child1", "child2"])
     collector.save(span)
     retrieved = collector.get_span(span.span_id)
     assert retrieved is not None
     assert retrieved.children == ["child1", "child2"]
+
+
+def test_parent_saved_after_child_links_children(collector):
+    root = TraceSpan(agent="root")
+    child = TraceSpan(agent="child", parent_id=root.span_id, trace_id=root.trace_id)
+    collector.save(child)
+
+    collector.save(root)
+
+    retrieved = collector.get_span(root.span_id)
+    assert retrieved is not None
+    assert retrieved.children == [child.span_id]
+
+    child_retrieved = collector.get_span(child.span_id)
+    assert child_retrieved is not None
+    assert child_retrieved.parent_id == root.span_id
+
+
+def test_save_update_keeps_children_after_resave(collector):
+    root = TraceSpan(agent="root")
+    child = TraceSpan(agent="child", parent_id=root.span_id, trace_id=root.trace_id)
+    collector.save(child)
+
+    collector.save(root)
+
+    root.duration_ms = 123
+    collector.save(root)
+
+    retrieved = collector.get_span(root.span_id)
+    assert retrieved is not None
+    assert retrieved.duration_ms == 123
+    assert retrieved.children == [child.span_id]

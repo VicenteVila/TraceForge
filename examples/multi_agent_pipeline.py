@@ -1,5 +1,6 @@
-import traceforge
 import random
+
+import traceforge
 
 traceforge.configure(collector="sqlite", db_path="cogniteam_traces.db")
 
@@ -59,7 +60,7 @@ class Orchestrator:
             artifacts = self.developer.execute(plan)
         except Exception as e:
             fix = self.debugger.diagnose(e, plan)
-            print(f"  Debugger generated fix, re-executing...")
+            print("  Debugger generated fix, re-executing...")
             artifacts = self.developer.execute(fix)
 
         return artifacts

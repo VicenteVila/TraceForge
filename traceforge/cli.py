@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -8,23 +9,38 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 
-from .collector.memory import MemoryCollector
-from .core import TraceSpan
+from .core import TraceCollector, TraceSpan
 from .decorator import _get_default_collector
 
 app = typer.Typer(help="TraceForge - Trazabilidad para pipelines multi-agente")
 console = Console()
 
 
-def _build_span_tree(span: TraceSpan, collector: MemoryCollector) -> Tree:
+def _percentile(sorted_values: list[int], p: float) -> int:
+    if not sorted_values:
+        return 0
+    rank = math.ceil(p * len(sorted_values)) - 1
+    return sorted_values[max(0, min(rank, len(sorted_values) - 1))]
+
+
+def _build_span_tree(span: TraceSpan, collector: TraceCollector) -> Tree:
     label_parts = [f"[bold]{span.agent}[/bold]"]
     if span.model:
         label_parts.append(f"({span.model})")
     label_parts.append(f"→ {span.duration_ms}ms")
     if span.tokens_input or span.tokens_output:
         label_parts.append(f"| {span.tokens_input + span.tokens_output} tokens")
+    if span.stream:
+        metrics = []
+        if span.ttft_ms is not None:
+            metrics.append(f"⏱ ttft {span.ttft_ms:.0f}ms")
+        if span.throughput_tps:
+            metrics.append(f"{span.throughput_tps:.0f} tok/s")
+        label_parts.append(f"| [cyan]{' · '.join(metrics)}[/cyan]")
     if span.cost_usd:
         label_parts.append(f"| ${span.cost_usd:.4f}")
+    if span.input_truncated or span.output_truncated:
+        label_parts.append("[yellow]⚠ truncated[/yellow]")
     if span.status == "error":
         label_parts.append("[red]✗ ERROR[/red]")
     else:
@@ -53,7 +69,7 @@ def _build_span_tree(span: TraceSpan, collector: MemoryCollector) -> Tree:
 def show_trace(
     trace_id: str,
     tree: bool = True,
-    collector: Optional[MemoryCollector] = None,
+    collector: Optional[TraceCollector] = None,
 ) -> None:
     _collector = collector or _get_default_collector()
     spans = _collector.get_trace(trace_id)
@@ -159,7 +175,7 @@ def stats(
 
     for agt, data in sorted(by_agent.items()):
         durations = sorted(data["durations"])
-        p95 = durations[int(len(durations) * 0.95)] if durations else 0
+        p95 = _percentile(durations, 0.95)
         avg = sum(durations) / len(durations) if durations else 0
         table.add_row(
             agt,
@@ -183,7 +199,7 @@ def report(
                             help="Formato: html, json, markdown"),
 ):
     try:
-        from .report import generate_report
+        from .reporting import generate_report
     except ImportError:
         console.print("[red]Report requires jinja2: pip install traceforge[/red]")
         raise typer.Exit(code=1)
@@ -265,6 +281,8 @@ def export(
                 "tokens_output": s.tokens_output,
                 "cost_usd": s.cost_usd,
                 "error": s.error,
+                "input_truncated": s.input_truncated,
+                "output_truncated": s.output_truncated,
             })
 
         output = json.dumps(data, indent=2, default=str)

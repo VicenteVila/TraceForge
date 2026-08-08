@@ -3,8 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Generator, Optional
 
-from .collector.memory import MemoryCollector
-from .core import TraceSpan
+from .core import TraceCollector, TraceSpan
 from .decorator import _current_parent_id, _current_trace_id, _get_default_collector
 
 
@@ -13,7 +12,7 @@ def span(
     agent: str,
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
-    collector: Optional[MemoryCollector] = None,
+    collector: Optional[TraceCollector] = None,
 ) -> Generator[TraceSpan, Any, None]:
     _collector = collector or _get_default_collector()
     _tags = tags or []
