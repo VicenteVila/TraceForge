@@ -25,7 +25,13 @@ from typing import Any, Callable, Optional
 
 from .context import span
 from .core import TraceCollector, TraceSpan
-from .decorator import _current_parent_id, _current_trace_id, _get_default_collector
+from .decorator import (
+    _current_parent_id,
+    _current_trace_id,
+    _get_default_collector,
+    _on_new_trace,
+    _on_trace_finished,
+)
 
 MAX_CHUNK_OFFSETS = 200
 
@@ -90,7 +96,9 @@ def _llm_wrapper_factory(
     chunk_text: Callable[[Any], Optional[str]],
 ):
     def factory(original: Callable) -> Callable:
-        if inspect.iscoroutinefunction(original):
+        # openai/anthropic wrap async methods with @required_args (functools.wraps),
+        # so `iscoroutinefunction` on the raw attribute is False. unwrap first.
+        if inspect.iscoroutinefunction(inspect.unwrap(original)):
 
             @functools.wraps(original)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -111,6 +119,9 @@ def _llm_wrapper_factory(
                         return response
 
                 sp = _new_span(agent, model, _collector)
+                is_new_trace = _current_trace_id.get() is None
+                if is_new_trace:
+                    _on_new_trace(sp.trace_id)
                 prompt = _extract_prompt(kwargs)
                 if prompt is not None:
                     sp.set_input(prompt)
@@ -121,8 +132,10 @@ def _llm_wrapper_factory(
                     sp.set_error(f"{type(e).__name__}: {str(e)}")
                     sp.close()
                     _collector.save(sp)
+                    if is_new_trace:
+                        _on_trace_finished(sp.trace_id)
                     raise
-                return _AsyncStreamProxy(stream, sp, _collector, started, chunk_text, usage_extractor)
+                return _AsyncStreamProxy(stream, sp, _collector, started, chunk_text, usage_extractor, is_new_trace)
 
             return async_wrapper
 
@@ -145,6 +158,9 @@ def _llm_wrapper_factory(
                     return response
 
             sp = _new_span(agent, model, _collector)
+            is_new_trace = _current_trace_id.get() is None
+            if is_new_trace:
+                _on_new_trace(sp.trace_id)
             prompt = _extract_prompt(kwargs)
             if prompt is not None:
                 sp.set_input(prompt)
@@ -155,8 +171,10 @@ def _llm_wrapper_factory(
                 sp.set_error(f"{type(e).__name__}: {str(e)}")
                 sp.close()
                 _collector.save(sp)
+                if is_new_trace:
+                    _on_trace_finished(sp.trace_id)
                 raise
-            return _SyncStreamProxy(stream, sp, _collector, started, chunk_text, usage_extractor)
+            return _SyncStreamProxy(stream, sp, _collector, started, chunk_text, usage_extractor, is_new_trace)
 
         return wrapper
 
@@ -172,6 +190,7 @@ class _StreamMixin:
         started: float,
         chunk_text: Callable[[Any], Optional[str]],
         usage_extractor: Callable[[Any], tuple[int, int]],
+        is_new_trace: bool = False,
     ):
         self._inner = inner
         self._span = span
@@ -179,6 +198,7 @@ class _StreamMixin:
         self._started = started
         self._chunk_text = chunk_text
         self._usage_extractor = usage_extractor
+        self._is_new_trace = is_new_trace
         self._finalized = False
         self._chunks = 0
         self._offsets: list[float] = []
@@ -220,6 +240,8 @@ class _StreamMixin:
         sp.close()
         if self._collector is not None:
             self._collector.save(sp)
+        if self._is_new_trace:
+            _on_trace_finished(sp.trace_id)
 
     def __del__(self) -> None:
         try:

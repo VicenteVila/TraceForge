@@ -1,10 +1,20 @@
+import contextvars
 import warnings
 
 import pytest
 
 from traceforge import trace
 from traceforge.collector.memory import MemoryCollector
+from traceforge.context import span
 from traceforge.core import TraceCollector, TraceSpan
+from traceforge.decorator import OrphanTraceWarning, _open_traces
+
+
+@pytest.fixture(autouse=True)
+def _clean_open_traces():
+    _open_traces.clear()
+    yield
+    _open_traces.clear()
 
 
 @pytest.fixture
@@ -196,3 +206,38 @@ def test_span_saved_exactly_once():
 
     spans = collector.get_trace(collector.get_last_trace_id())
     assert len(spans) == 1
+
+
+def test_no_orphan_warning_for_single_trace(mem_collector):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with span(agent="root", collector=mem_collector):
+            with span(agent="child", collector=mem_collector):
+                pass
+    assert not [w for w in caught if issubclass(w.category, OrphanTraceWarning)]
+
+
+def test_orphan_warning_when_new_trace_started_inside_open_trace(mem_collector):
+    def _escaped_call():
+        with span(agent="orphan", collector=mem_collector):
+            pass
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with span(agent="root", collector=mem_collector):
+            contextvars.Context().run(_escaped_call)
+
+    orphan_warnings = [w for w in caught if issubclass(w.category, OrphanTraceWarning)]
+    assert len(orphan_warnings) == 1
+    assert "escaped" in str(orphan_warnings[0].message)
+
+
+def test_no_orphan_warning_after_root_closes(mem_collector):
+    with span(agent="root", collector=mem_collector):
+        pass
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with span(agent="later", collector=mem_collector):
+            pass
+    assert not [w for w in caught if issubclass(w.category, OrphanTraceWarning)]

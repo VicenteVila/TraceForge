@@ -47,6 +47,11 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6.0",
 ]
+sdk = [
+    "openai>=1.0",
+    "anthropic>=0.40",
+    "httpx>=0.27",
+]
 
 [project.urls]
 Homepage = "https://github.com/VicenteVila/TraceForge"

@@ -40,18 +40,19 @@ def test_show_unsupported_format(populated_module):
         traceforge.show(populated_module, format="markdown")
 
 
-def test_configure_auto_trace_without_sdks_does_not_crash():
-    import sys
+def test_configure_auto_trace_without_sdks_does_not_crash(monkeypatch):
+    import builtins
 
-    saved = {}
-    for mod in ("openai", "anthropic", "langchain", "llama_index"):
-        if mod in sys.modules:
-            saved[mod] = sys.modules.pop(mod)
+    real_import = builtins.__import__
 
-    try:
-        results = traceforge.instrument(collector=MemoryCollector())
-    finally:
-        sys.modules.update(saved)
+    def blocked(name, *args, **kwargs):
+        if name.startswith("openai") or name.startswith("anthropic"):
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+
+    results = traceforge.instrument(collector=MemoryCollector())
 
     assert set(results.keys()) == {"openai", "anthropic"}
     assert results["openai"] is False

@@ -1,7 +1,9 @@
 import contextvars
 import functools
 import inspect
+import threading
 import uuid
+import warnings
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -10,6 +12,46 @@ from .core import TraceCollector, TraceSpan, _capture_input, _capture_output
 
 _current_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("trace_id", default=None)
 _current_parent_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("parent_id", default=None)
+
+
+class OrphanTraceWarning(UserWarning):
+    """A new trace was started while another trace is still open.
+
+    Usually means a span/LLM call ran outside the orchestration context
+    (e.g. in a worker thread or ``asyncio.create_task``), where the
+    contextvars that link spans into the current trace are not visible.
+    """
+
+
+_open_traces: dict[str, int] = {}
+_open_traces_lock = threading.RLock()
+
+
+def _on_new_trace(trace_id: str) -> None:
+    """Register a new root trace, warning if other traces are still open."""
+    global _open_traces
+    with _open_traces_lock:
+        others = [t for t in _open_traces if t != trace_id]
+        if others:
+            warnings.warn(
+                f"New trace {trace_id[:8]}... started while trace "
+                f"{others[0][:8]}... is still open — a span or LLM call likely "
+                f"escaped the orchestration context (thread/task). Wrap it in "
+                f"traceforge.span() to keep it inside the parent trace.",
+                OrphanTraceWarning,
+                stacklevel=3,
+            )
+        _open_traces[trace_id] = _open_traces.get(trace_id, 0) + 1
+
+
+def _on_trace_finished(trace_id: str) -> None:
+    global _open_traces
+    with _open_traces_lock:
+        remaining = _open_traces.get(trace_id, 1) - 1
+        if remaining <= 0:
+            _open_traces.pop(trace_id, None)
+        else:
+            _open_traces[trace_id] = remaining
 
 
 def trace(
@@ -29,6 +71,7 @@ def trace(
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 _collector = collector or _get_default_collector()
                 inherited_trace_id = _current_trace_id.get()
+                is_new_trace = inherited_trace_id is None
                 trace_id = inherited_trace_id or str(uuid.uuid4())
                 parent_id = _current_parent_id.get()
                 span_id = str(uuid.uuid4())
@@ -49,6 +92,8 @@ def trace(
 
                 token_trace = _current_trace_id.set(trace_id)
                 token_parent = _current_parent_id.set(span_id)
+                if is_new_trace:
+                    _on_new_trace(trace_id)
 
                 try:
                     result = await func(*args, **kwargs)
@@ -64,6 +109,8 @@ def trace(
                     _collector.save(span)
                     _current_trace_id.reset(token_trace)
                     _current_parent_id.reset(token_parent)
+                    if is_new_trace:
+                        _on_trace_finished(trace_id)
 
             return async_wrapper
         else:
@@ -72,6 +119,7 @@ def trace(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 _collector = collector or _get_default_collector()
                 inherited_trace_id = _current_trace_id.get()
+                is_new_trace = inherited_trace_id is None
                 trace_id = inherited_trace_id or str(uuid.uuid4())
                 parent_id = _current_parent_id.get()
                 span_id = str(uuid.uuid4())
@@ -92,6 +140,8 @@ def trace(
 
                 token_trace = _current_trace_id.set(trace_id)
                 token_parent = _current_parent_id.set(span_id)
+                if is_new_trace:
+                    _on_new_trace(trace_id)
 
                 try:
                     result = func(*args, **kwargs)
@@ -107,6 +157,8 @@ def trace(
                     _collector.save(span)
                     _current_trace_id.reset(token_trace)
                     _current_parent_id.reset(token_parent)
+                    if is_new_trace:
+                        _on_trace_finished(trace_id)
 
             return sync_wrapper
 

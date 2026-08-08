@@ -116,6 +116,17 @@ def test_summary_aggregates():
     assert 0.0 <= agg["toxicity"]["avg_score"] <= 1.0
 
 
-def test_judge_builders_raise_without_sdk():
+def test_judge_builders_raise_without_sdk(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name.startswith("openai") or name.startswith("anthropic"):
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+
     with pytest.raises(ImportError):
         openai_judge()("hi")
