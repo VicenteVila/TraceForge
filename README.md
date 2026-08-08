@@ -193,13 +193,29 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 ## CLI
 
 ```bash
-traceforge list --last 10                    # last 10 traces
-traceforge show abc-123                       # span tree
-traceforge stats --agent planner --since 7    # metrics by agent
-traceforge report abc-123 -o report.html      # HTML report with Gantt
-traceforge export --format json               # export to JSON
-traceforge export --format otel --since 7     # export to OpenTelemetry
+traceforge list --last 10                          # last 10 traces
+traceforge list --json                             # machine-readable
+traceforge show abc-123                            # span tree
+traceforge show abc-123 --json                     # spans as JSON
+traceforge stats --agent planner --since 7         # metrics by agent
+traceforge stats --json
+traceforge query --agent planner --status error --min-duration 500
+traceforge query --since 7 --json
+traceforge report abc-123 -o report.html           # HTML report with Gantt
+traceforge export --format json                    # export to JSON
+traceforge export --format otel --since 7          # export to OpenTelemetry
+traceforge clear --yes                             # wipe all traces
 ```
+
+Point the CLI at any backend (memory, sqlite, postgres, clickhouse):
+
+```bash
+traceforge --collector sqlite --db-path prod.db stats
+traceforge --collector postgres --dsn "postgresql://user:pass@host:5432/db" query --status error
+traceforge --collector clickhouse --dsn "http://user:pass@localhost:8123/db" list
+```
+
+If only `--dsn` is given, the backend is inferred from the URL (`http(s)` → clickhouse, otherwise postgres).
 
 ---
 

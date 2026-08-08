@@ -124,3 +124,78 @@ def test_cli_export_json_with_trace_id(runner, populated_collector):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert len(data) == 2
+
+
+def test_cli_list_json(runner, populated_collector):
+    result = runner.invoke(app, ["list", "--last", "5", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["spans"] == 2
+    assert data[0]["trace_id"] == populated_collector.get_last_trace_id()
+
+
+def test_cli_show_json(runner, populated_collector):
+    trace_id = populated_collector.get_last_trace_id()
+    result = runner.invoke(app, ["show", trace_id, "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 2
+    assert {d["agent"] for d in data} == {"root", "child"}
+    assert "gemini-2.5-flash" in [d["model"] for d in data]
+
+
+def test_cli_stats_json(runner, populated_collector):
+    result = runner.invoke(app, ["stats", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert {d["agent"] for d in data} == {"root", "child"}
+    assert data[0]["spans"] == 1
+
+
+def test_cli_query_filter(runner, populated_collector):
+    result = runner.invoke(app, ["query", "--agent", "child"])
+    assert result.exit_code == 0
+    assert "child" in result.output
+    assert "root" not in result.output
+
+
+def test_cli_query_no_match(runner, populated_collector):
+    result = runner.invoke(app, ["query", "--agent", "ghost"])
+    assert result.exit_code == 0
+    assert "No spans match" in result.output
+
+
+def test_cli_query_json(runner, populated_collector):
+    result = runner.invoke(app, ["query", "--agent", "child", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["agent"] == "child"
+
+
+def test_cli_clear_requires_confirmation(runner, populated_collector):
+    result = runner.invoke(app, ["clear"])
+    assert result.exit_code != 0
+    assert "confirm" in result.output.lower()
+    assert len(populated_collector.query()) == 2
+
+
+def test_cli_clear(runner, populated_collector):
+    result = runner.invoke(app, ["clear", "--yes"])
+    assert result.exit_code == 0
+    assert populated_collector.query() == []
+
+
+def test_cli_backend_memory_option(runner):
+    result = runner.invoke(app, ["--collector", "memory", "list"])
+    assert result.exit_code == 0
+    assert "No traces found" in result.output
+
+
+def test_cli_backend_sqlite_db_path(runner, tmp_path):
+    db = str(tmp_path / "cli.db")
+    result = runner.invoke(app, ["--collector", "sqlite", "--db-path", db, "list", "--json"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "[]"
+    assert (tmp_path / "cli.db").exists()
