@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 
 from .redact import redact_value
 
-MAX_INPUT_LEN = 2000
-MAX_OUTPUT_LEN = 5000
-MAX_LIST_ITEMS = 10
+MAX_INPUT_LEN = 30000
+MAX_OUTPUT_LEN = 80000
+MAX_LIST_ITEMS = 50
 
 _truncation_limits: dict[str, int] = {
     "input": MAX_INPUT_LEN,

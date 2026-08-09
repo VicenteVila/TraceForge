@@ -122,12 +122,14 @@ def test_independent_calls_have_different_trace_ids(mem_collector):
 
 
 def test_large_input_flagged_and_warns(mem_collector):
+    from traceforge.core import MAX_INPUT_LEN
+
     @trace(agent="big_input", collector=mem_collector)
     def consume(data: str):
         return "ok"
 
     with pytest.warns(RuntimeWarning, match="truncated captured input"):
-        consume("x" * 5000)
+        consume("x" * (MAX_INPUT_LEN + 1))
 
     spans = mem_collector.get_trace(mem_collector.get_last_trace_id())
     assert spans[0].input_truncated is True
@@ -135,9 +137,11 @@ def test_large_input_flagged_and_warns(mem_collector):
 
 
 def test_large_output_flagged_and_warns(mem_collector):
+    from traceforge.core import MAX_OUTPUT_LEN
+
     @trace(agent="big_output", collector=mem_collector)
     def produce():
-        return "y" * 6000
+        return "y" * (MAX_OUTPUT_LEN + 1)
 
     with pytest.warns(RuntimeWarning, match="truncated captured output"):
         produce()

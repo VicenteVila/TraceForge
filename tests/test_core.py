@@ -21,7 +21,7 @@ def _reset_limits():
 
 
 def test_capture_input_flags_truncation():
-    big = "x" * 5000
+    big = "x" * (MAX_INPUT_LEN * 2)
     with pytest.warns(RuntimeWarning, match="truncated captured input"):
         value, truncated = _capture_input((big,), {"k": "short"})
     assert truncated is True
@@ -39,7 +39,7 @@ def test_capture_input_short_does_not_truncate():
 
 
 def test_capture_output_flags_truncation():
-    big = "y" * 6000
+    big = "y" * (MAX_OUTPUT_LEN * 2)
     with pytest.warns(RuntimeWarning, match="truncated captured output"):
         value, truncated = _capture_output(big)
     assert truncated is True
@@ -47,11 +47,12 @@ def test_capture_output_flags_truncation():
 
 
 def test_list_truncation_flagged():
+    items = list(range(MAX_LIST_ITEMS + 2))
     with pytest.warns(RuntimeWarning, match="truncated captured input"):
-        value, truncated = _capture_input((list(range(50)),), {})
+        value, truncated = _capture_input((items,), {})
     assert truncated is True
     assert len(value["args"][0]) <= MAX_LIST_ITEMS + 1
-    assert "(50)" in value["args"][0][-1]
+    assert f"({len(items)})" in value["args"][0][-1]
 
 
 def test_limits_are_configurable():
