@@ -44,7 +44,15 @@ def test_report_html(collector, trace_id):
     assert "plotly" in result
     assert "Gantt" in result
     assert "Agent Flow" in result
+    assert "Cost Breakdown" in result
     assert "Span Details" in result
+
+
+def test_report_html_labels_estimated_cost(collector, trace_id):
+    result = generate_report(trace_id, format="html", collector=collector)
+    assert "Cost (est.)" in result
+    assert "precio público" in result
+    assert "free tier: $0" in result
 
 
 def test_report_html_with_output(tmp_path, collector, trace_id):

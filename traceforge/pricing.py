@@ -5,6 +5,17 @@ from pathlib import Path
 from typing import Optional
 
 PRICING_TABLE: dict[str, dict[str, float]] = {
+    "gpt-oss-120b": {"input": 0.00035, "output": 0.00075},
+    "cerebras/gpt-oss-120b": {"input": 0.00035, "output": 0.00075},
+    "gemma-4-31b": {"input": 0.00013, "output": 0.00040},
+    "cerebras/gemma-4-31b": {"input": 0.00013, "output": 0.00040},
+    "codestral-latest": {"input": 0.00030, "output": 0.00090},
+    "mistral/codestral-latest": {"input": 0.00030, "output": 0.00090},
+    "mistral-large-latest": {"input": 0.00050, "output": 0.00150},
+    "mistral/mistral-large-latest": {"input": 0.00050, "output": 0.00150},
+    "nvidia/llama-3.3-nemotron-super-49b-v1": {"input": 0.00013, "output": 0.00040},
+    "llama-3.3-70b-versatile": {"input": 0.00059, "output": 0.00079},
+    "groq/llama-3.3-70b-versatile": {"input": 0.00059, "output": 0.00079},
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.000300},
     "gemini-1.5-flash-8b": {"input": 0.0000375, "output": 0.000150},
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.00500},
@@ -140,3 +151,26 @@ def calculate_cost(model: str | None, tokens_input: int = 0, tokens_output: int 
 
 def get_model_list() -> list[str]:
     return sorted(set(PRICING_TABLE) | set(_dynamic_table))
+
+
+def price_changes() -> list[dict[str, object]]:
+    """Compare cached (dynamic) prices against the static table.
+
+    Returns a list of ``{model, static, cached}`` rows for every model that is
+    present in both the static ``PRICING_TABLE`` and the LiteLLM cache, but with
+    different rates. Useful to warn when a provider changed its market price.
+    """
+    changes: list[dict[str, object]] = []
+    for model, static in PRICING_TABLE.items():
+        cached = _dynamic_table.get(model)
+        if cached is None:
+            continue
+        if cached.get("input") != static["input"] or cached.get("output") != static["output"]:
+            changes.append(
+                {
+                    "model": model,
+                    "static": static,
+                    "cached": {"input": cached.get("input"), "output": cached.get("output")},
+                }
+            )
+    return changes

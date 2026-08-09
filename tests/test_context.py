@@ -42,6 +42,7 @@ def test_span_nested_inside_decorator():
 def test_span_output_truncation_flagged():
     collector = MemoryCollector()
     from traceforge.core import MAX_OUTPUT_LEN
+
     with pytest.warns(RuntimeWarning, match="truncated captured output"):
         with span(agent="big_output", collector=collector) as sp:
             sp.set_output("y" * (MAX_OUTPUT_LEN + 1))

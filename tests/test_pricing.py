@@ -55,6 +55,45 @@ def test_get_model_list():
     assert models == sorted(models)
 
 
+def test_stack_models_in_static_table():
+    for model in (
+        "gpt-oss-120b",
+        "gemma-4-31b",
+        "codestral-latest",
+        "mistral-large-latest",
+        "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "llama-3.3-70b-versatile",
+    ):
+        assert model in PRICING_TABLE
+        assert PRICING_TABLE[model]["input"] > 0
+        assert PRICING_TABLE[model]["output"] > 0
+
+
+def test_stack_model_costs_positive():
+    cost = calculate_cost("gpt-oss-120b", tokens_input=1_000_000, tokens_output=1_000_000)
+    assert cost == pytest.approx(0.35 + 0.75)
+
+    cost = calculate_cost("codestral-latest", tokens_input=1_000_000, tokens_output=1_000_000)
+    assert cost == pytest.approx(0.30 + 0.90)
+
+    cost = calculate_cost("mistral-large-latest", tokens_input=1_000_000, tokens_output=1_000_000)
+    assert cost == pytest.approx(0.50 + 1.50)
+
+
+def test_price_changes_reports_deltas(pricing_state):
+    pricing._dynamic_table = {"gpt-oss-120b": {"input": 0.00040, "output": 0.00090}}
+    changes = pricing.price_changes()
+    matching = [c for c in changes if c["model"] == "gpt-oss-120b"]
+    assert len(matching) == 1
+    assert matching[0]["static"] == {"input": 0.00035, "output": 0.00075}
+    assert matching[0]["cached"] == {"input": 0.00040, "output": 0.00090}
+
+
+def test_price_changes_empty_when_matching(pricing_state):
+    pricing._dynamic_table = {"gpt-oss-120b": {"input": 0.00035, "output": 0.00075}}
+    assert pricing.price_changes() == []
+
+
 def test_all_models_have_valid_rates():
     for model, rates in PRICING_TABLE.items():
         assert "input" in rates

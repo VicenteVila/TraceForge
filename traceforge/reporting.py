@@ -41,9 +41,10 @@ tr:hover td { background: #1e293b; }
   <div class="stat-card"><div class="label">Spans</div><div class="value">{{ total_spans }}</div></div>
   <div class="stat-card"><div class="label">Duration</div><div class="value">{{ total_duration }}ms</div></div>
   <div class="stat-card"><div class="label">Tokens</div><div class="value">{{ total_tokens }}</div></div>
-  <div class="stat-card"><div class="label">Cost</div><div class="value">${{ "%.4f"|format(total_cost) }}</div></div>
+  <div class="stat-card"><div class="label">Cost (est.)</div><div class="value">${{ "%.4f"|format(total_cost) }}</div></div>
   <div class="stat-card"><div class="label">Errors</div><div class="value" style="color: {{ '#ef4444' if error_count > 0 else '#22c55e' }}">{{ error_count }}</div></div>
 </div>
+<p style="color: #475569; font-size: 12px; margin: -12px 0 24px;">Coste estimado (precio público de mercado) · free tier: $0</p>
 
 {% if gantt_json %}
 <div class="chart-container">
@@ -56,6 +57,13 @@ tr:hover td { background: #1e293b; }
 <div class="chart-container">
   <h2>Agent Flow</h2>
   <div id="sankey-chart"></div>
+</div>
+{% endif %}
+
+{% if cost_json %}
+<div class="chart-container">
+  <h2>Cost Breakdown</h2>
+  <div id="cost-chart"></div>
 </div>
 {% endif %}
 
@@ -110,6 +118,10 @@ Plotly.newPlot('gantt-chart', ganttData.data, ganttData.layout, {responsive: tru
 {% if sankey_json %}
 var sankeyData = {{ sankey_json | safe }};
 Plotly.newPlot('sankey-chart', sankeyData.data, sankeyData.layout, {responsive: true});
+{% endif %}
+{% if cost_json %}
+var costData = {{ cost_json | safe }};
+Plotly.newPlot('cost-chart', costData.data, costData.layout, {responsive: true});
 {% endif %}
 </script>
 </body>
@@ -319,6 +331,61 @@ def _build_sankey(spans: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     return {"data": [fig.data[0].to_plotly_json()], "layout": fig.layout.to_plotly_json()}
 
 
+def _build_cost_chart(spans: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
+
+    by_agent: dict[str, float] = {}
+    by_model: dict[str, float] = {}
+    for s in spans:
+        by_agent[s["agent"]] = by_agent.get(s["agent"], 0.0) + s["cost_usd"]
+        model = s["model"] or "unknown"
+        by_model[model] = by_model.get(model, 0.0) + s["cost_usd"]
+
+    fig = go.Figure()
+    if by_model:
+        fig.add_trace(
+            go.Bar(
+                x=[f"${c:.4f}" for c in by_model.values()],
+                y=list(by_model.keys()),
+                orientation="h",
+                name="Cost",
+                marker=dict(color="#22d3ee"),
+                hovertemplate="%{y}: $%{x}<extra></extra>",
+            )
+        )
+    if by_agent:
+        fig.add_trace(
+            go.Bar(
+                x=[f"${c:.4f}" for c in by_agent.values()],
+                y=list(by_agent.keys()),
+                orientation="h",
+                name="Cost by agent",
+                marker=dict(color="#a855f7"),
+                hovertemplate="%{y}: $%{x}<extra></extra>",
+                yaxis="y2",
+            )
+        )
+
+    fig.update_layout(
+        barmode="group",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e2e8f0", size=11),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=max(220, max(len(by_model), len(by_agent)) * 28),
+        xaxis=dict(title="Cost (USD)", gridcolor="#334155"),
+        yaxis=dict(title=None, gridcolor="#334155"),
+        yaxis2=dict(overlaying="y", side="right", showgrid=False),
+        legend=dict(font=dict(size=10)),
+        showlegend=len(by_model) > 0 and len(by_agent) > 0,
+    )
+
+    return {"data": [t.to_plotly_json() for t in fig.data], "layout": fig.layout.to_plotly_json()}
+
+
 def generate_report(
     trace_id: str,
     format: str = "html",
@@ -375,7 +442,7 @@ def generate_report(
             f"- **Spans:** {total_spans}",
             f"- **Duration:** {total_duration}ms",
             f"- **Tokens:** {total_tokens}",
-            f"- **Cost:** ${total_cost:.4f}",
+            f"- **Cost (est.):** ${total_cost:.4f}",
             f"- **Errors:** {error_count}",
             "",
             "| Agent | Model | Status | Duration | Tokens | Cost | Stream |",
@@ -405,6 +472,7 @@ def generate_report(
 
     gantt_json = _build_gantt(flat, spans_by_id)
     sankey_json = _build_sankey(flat)
+    cost_json = _build_cost_chart(flat)
 
     template = Template(HTML_TEMPLATE)
     html = template.render(
@@ -417,6 +485,7 @@ def generate_report(
         spans=flat,
         gantt_json=gantt_json,
         sankey_json=sankey_json,
+        cost_json=cost_json,
     )
 
     if output:

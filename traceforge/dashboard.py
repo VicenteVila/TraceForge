@@ -80,7 +80,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             traces = self.server.collector.list_traces(limit=limit)
             return self._send_json([_trace_summary(self.server.collector, t) for t in reversed(traces)])
         if path.startswith("/api/trace/"):
-            trace_id = path[len("/api/trace/"):]
+            trace_id = path[len("/api/trace/") :]
             spans = self.server.collector.get_trace(trace_id)
             if not spans:
                 return self._send_json({"error": "trace not found"}, status=404)
@@ -123,15 +123,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             durations = sorted(data["durations"])
             avg = sum(durations) / len(durations) if durations else 0
             p95 = durations[max(0, min(int(0.95 * len(durations)) - 1, len(durations) - 1))] if durations else 0
-            rows.append({
-                "agent": agent,
-                "spans": data["spans"],
-                "tokens": data["tokens"],
-                "cost_usd": round(data["cost"], 6),
-                "errors": data["errors"],
-                "avg_duration_ms": round(avg, 2),
-                "p95_duration_ms": p95,
-            })
+            rows.append(
+                {
+                    "agent": agent,
+                    "spans": data["spans"],
+                    "tokens": data["tokens"],
+                    "cost_usd": round(data["cost"], 6),
+                    "errors": data["errors"],
+                    "avg_duration_ms": round(avg, 2),
+                    "p95_duration_ms": p95,
+                }
+            )
         return rows
 
     def _send_json(self, payload: Any, status: int = 200):
@@ -214,6 +216,12 @@ _HTML_PAGE = """<!doctype html>
   input, select { background:#0b0e14; border:1px solid #2b3350; color:#e6e6e6; padding:6px 8px; border-radius:6px; }
   .toolbar { display:flex; gap:10px; margin-bottom:14px; align-items:center; flex-wrap:wrap; }
   a { color:#7dd3fc; text-decoration:none; }
+  .bars { margin-top:10px; }
+  .bar-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .bar-label { width:130px; font-size:12px; color:#9aa3b2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar-track { flex:1; background:#1a2030; border-radius:4px; height:14px; overflow:hidden; }
+  .bar-fill { height:100%; background:linear-gradient(90deg,#22d3ee,#a855f7); border-radius:4px; }
+  .bar-val { width:90px; text-align:right; font-size:12px; }
 </style>
 </head>
 <body>
@@ -227,6 +235,7 @@ _HTML_PAGE = """<!doctype html>
   <label class="muted" style="margin-left:auto"><input type="checkbox" id="autorefresh" checked onchange="tick()"> auto</label>
 </header>
 <main>
+  <p class="muted" style="font-size:12px; margin-top:0;">Coste estimado (precio público de mercado) · free tier: $0</p>
   <div id="view-traces">
     <div id="traces"></div>
     <div id="trace-detail"></div>
@@ -303,6 +312,16 @@ async function loadStats(){
   t.innerHTML = "<table><thead><tr><th>Agent</th><th class='right'>Spans</th><th class='right'>Tokens</th><th class='right'>Cost</th><th class='right'>Errors</th><th class='right'>Avg ms</th><th class='right'>P95 ms</th></tr></thead><tbody>" +
     data.map(r => `<tr><td>${esc(r.agent)}</td><td class="right">${r.spans}</td><td class="right">${r.tokens}</td><td class="right">${money(r.cost_usd)}</td><td class="right">${r.errors}</td><td class="right">${r.avg_duration_ms}</td><td class="right">${r.p95_duration_ms}</td></tr>`).join("") +
     "</tbody></table>";
+  renderCostBars(data);
+}
+function renderCostBars(data){
+  const maxCost = Math.max(...data.map(r => r.cost_usd), 0.0001);
+  const html = "<h3>Cost by agent (est.)</h3><div class='bars'>" +
+    data.map(r => {
+      const pct = (r.cost_usd / maxCost * 100).toFixed(1);
+      return `<div class="bar-row"><span class="bar-label">${esc(r.agent)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><span class="bar-val">${money(r.cost_usd)}</span></div>`;
+    }).join("") + "</div>";
+  $("stats").insertAdjacentHTML("beforeend", html);
 }
 async function runQuery(){
   const p = new URLSearchParams();

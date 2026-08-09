@@ -135,7 +135,7 @@ def show_trace(
 
     console.print(f"\n[bold]Trace:[/bold] {trace_id}")
     summary = f"  Spans: {len(spans)} | Duration: {total_duration}ms"
-    summary += f" | Tokens: {total_tokens} | Cost: ${total_cost:.4f} | Errors: {error_count}"
+    summary += f" | Tokens: {total_tokens} | Cost (est.): ${total_cost:.4f} | Errors: {error_count}"
     console.print(summary)
 
     for root in roots:
@@ -178,7 +178,7 @@ def list_traces(
     table.add_column("Spans")
     table.add_column("Duration")
     table.add_column("Tokens")
-    table.add_column("Cost")
+    table.add_column("Cost (est.)")
     table.add_column("Errors")
 
     for row in rows:
@@ -263,7 +263,7 @@ def stats(
     table.add_column("Agent")
     table.add_column("Spans")
     table.add_column("Total Tokens")
-    table.add_column("Total Cost")
+    table.add_column("Total Cost (est.)")
     table.add_column("Errors")
     table.add_column("Avg Duration")
     table.add_column("P95 Duration")
@@ -451,6 +451,32 @@ def dashboard(
 
     _collector = _get_default_collector()
     run_dashboard(collector=_collector, host=host, port=port, open_browser=open_browser)
+
+
+@app.command()
+def refresh_prices(
+    source: str = typer.Option("litellm", "--source", help="Fuente del catálogo (litellm)"),
+    url: Optional[str] = typer.Option(None, "--url", help="URL de precios personalizada"),
+    cache_path: Optional[str] = typer.Option(None, "--cache-path", help="Ruta de la caché"),
+    timeout: int = typer.Option(15, "--timeout", help="Timeout de descarga (segundos)"),
+):
+    """Descargar el catálogo de precios más reciente y cachearlo localmente."""
+    from .pricing import price_changes
+    from .pricing import refresh_prices as _refresh
+
+    try:
+        n = _refresh(source=source, url=url, cache_path=cache_path, timeout=timeout)
+    except Exception as e:
+        console.print(f"[red]Error al descargar precios: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[green]Precios actualizados: {n} modelos cargados[/green]")
+    for change in price_changes():
+        static, cached = change["static"], change["cached"]
+        console.print(
+            f"[yellow]⚠ {change['model']}: ${static['input']:.5f}/${static['output']:.5f} "
+            f"→ ${cached['input']:.5f}/${cached['output']:.5f} (por 1K tokens)[/yellow]"
+        )
 
 
 @app.command()

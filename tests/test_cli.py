@@ -199,3 +199,55 @@ def test_cli_backend_sqlite_db_path(runner, tmp_path):
     assert result.exit_code == 0
     assert result.output.strip() == "[]"
     assert (tmp_path / "cli.db").exists()
+
+
+def test_cli_refresh_prices(runner, tmp_path):
+    src = tmp_path / "prices.json"
+    src.write_text(
+        json.dumps(
+            {
+                "cli-model": {
+                    "input_cost_per_token": 0.000002,
+                    "output_cost_per_token": 0.000008,
+                },
+            }
+        )
+    )
+    cache = str(tmp_path / "cache.json")
+    result = runner.invoke(app, ["refresh-prices", "--url", src.as_uri(), "--cache-path", cache])
+    assert result.exit_code == 0
+    assert "1 modelos cargados" in result.output
+    assert (tmp_path / "cache.json").exists()
+
+
+def test_cli_refresh_prices_reports_change(runner, tmp_path):
+    src = tmp_path / "prices.json"
+    src.write_text(
+        json.dumps(
+            {
+                "gpt-oss-120b": {
+                    "input_cost_per_token": 0.00000040,
+                    "output_cost_per_token": 0.00000090,
+                },
+            }
+        )
+    )
+    cache = str(tmp_path / "cache.json")
+    result = runner.invoke(app, ["refresh-prices", "--url", src.as_uri(), "--cache-path", cache])
+    assert result.exit_code == 0
+    assert "gpt-oss-120b" in result.output
+
+
+def test_cli_refresh_prices_failure(runner, tmp_path):
+    result = runner.invoke(
+        app,
+        [
+            "refresh-prices",
+            "--url",
+            (tmp_path / "missing.json").as_uri(),
+            "--cache-path",
+            str(tmp_path / "c.json"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Error" in result.output
