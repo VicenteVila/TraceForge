@@ -216,13 +216,13 @@ class ClickHouseCollector(TraceCollector):
         span.children = [r["span_id"] for r in kids]
         return span
 
-    def list_traces(self, limit: int = 10) -> list[str]:
+    def list_traces(self, limit: int = 10, offset: int = 0) -> list[str]:
         rows = self._rows(
             """
             SELECT trace_id AS tid, MAX(started_at) AS t
-            FROM spans GROUP BY trace_id ORDER BY t DESC LIMIT {limit:UInt32}
+            FROM spans GROUP BY trace_id ORDER BY t DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}
             """,
-            {"limit": limit},
+            {"limit": limit, "offset": offset},
         )
         return [r["tid"] for r in rows]
 

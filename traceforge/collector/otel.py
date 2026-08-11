@@ -158,8 +158,12 @@ class OTELCollector(TraceCollector):
     def get_span(self, span_id: str) -> Optional[TraceSpan]:
         return self._spans.get(span_id)
 
-    def list_traces(self, limit: int = 10) -> list[str]:
-        return self._trace_order[-limit:]
+    def list_traces(self, limit: int = 10, offset: int = 0) -> list[str]:
+        end = len(self._trace_order) - offset
+        if end <= 0:
+            return []
+        start = max(0, end - limit) if limit > 0 else 0
+        return self._trace_order[start:end]
 
     def get_last_trace_id(self) -> Optional[str]:
         if not self._trace_order:

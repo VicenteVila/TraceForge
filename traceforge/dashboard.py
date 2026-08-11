@@ -62,6 +62,29 @@ def _trace_summary(collector: TraceCollector, trace_id: str) -> dict:
     }
 
 
+def _build_timeseries(collector: TraceCollector, bucket: str = "day") -> list[dict]:
+    """Serie temporal de spans y coste, agrupada por hora o día."""
+    from collections import defaultdict
+
+    spans = collector.query()
+    if bucket not in ("hour", "day"):
+        bucket = "day"
+    groups: dict[str, dict[str, Any]] = defaultdict(lambda: {"spans": 0, "tokens": 0, "cost_usd": 0.0, "errors": 0})
+    for s in spans:
+        if not s.started_at:
+            continue
+        key = s.started_at.strftime("%Y-%m-%d %H:00" if bucket == "hour" else "%Y-%m-%d")
+        g = groups[key]
+        g["spans"] += 1
+        g["tokens"] += s.tokens_input + s.tokens_output
+        g["cost_usd"] += s.cost_usd
+        g["errors"] += 1 if s.status == "error" else 0
+    return [
+        {"bucket": k, **{kk: (round(v, 8) if kk == "cost_usd" else v) for kk, v in sorted(g.items())}}
+        for k, g in sorted(groups.items())
+    ]
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server: "DashboardServer"
 
@@ -77,8 +100,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._send_json({"ok": True, "traces": len(self.server.collector.list_traces(limit=1000))})
         if path == "/api/traces":
             limit = int(params.get("limit", 20))
-            traces = self.server.collector.list_traces(limit=limit)
+            offset = int(params.get("offset", 0))
+            traces = self.server.collector.list_traces(limit=limit, offset=offset)
             return self._send_json([_trace_summary(self.server.collector, t) for t in reversed(traces)])
+        if path == "/api/trace-count":
+            return self._send_json({"total": len(self.server.collector.list_traces(limit=100000))})
+        if path == "/api/timeseries":
+            return self._send_json(_build_timeseries(self.server.collector, params.get("bucket", "day")))
+        if path == "/api/export.csv":
+            return self._send_csv(self._export_rows(params))
         if path.startswith("/api/trace/"):
             trace_id = path[len("/api/trace/") :]
             spans = self.server.collector.get_trace(trace_id)
@@ -152,6 +182,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _export_rows(self, params: dict[str, str]) -> list[dict]:
+        spans = self._query(params)
+        rows = []
+        for s in spans:
+            rows.append(
+                {
+                    "trace_id": s.trace_id,
+                    "span_id": s.span_id,
+                    "agent": s.agent,
+                    "model": s.model or "",
+                    "status": s.status,
+                    "duration_ms": s.duration_ms,
+                    "tokens_input": s.tokens_input,
+                    "tokens_output": s.tokens_output,
+                    "cost_usd": round(s.cost_usd, 8),
+                    "error": s.error or "",
+                    "started_at": s.started_at.isoformat() if s.started_at else "",
+                }
+            )
+        return rows
+
+    def _send_csv(self, rows: list[dict], status: int = 200):
+        import csv
+        import io
+
+        buf = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        else:
+            buf.write(
+                "trace_id,span_id,agent,model,status,duration_ms,tokens_input,tokens_output,cost_usd,error,started_at\n"
+            )
+        body = buf.getvalue().encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="traceforge_export.csv"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -189,6 +261,7 @@ _HTML_PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>TraceForge</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -222,6 +295,10 @@ _HTML_PAGE = """<!doctype html>
   .bar-track { flex:1; background:#1a2030; border-radius:4px; height:14px; overflow:hidden; }
   .bar-fill { height:100%; background:linear-gradient(90deg,#22d3ee,#a855f7); border-radius:4px; }
   .bar-val { width:90px; text-align:right; font-size:12px; }
+  .pager { display:flex; gap:10px; align-items:center; margin-top:10px; font-size:13px; }
+  .pager button { background:#1a2332; border:1px solid #2b3350; color:#e6e6e6; border-radius:6px; padding:4px 12px; cursor:pointer; }
+  .pager button:disabled { opacity:.4; cursor:default; }
+  .chart-box { background:#141823; border:1px solid #232a3e; border-radius:8px; padding:14px; margin-top:16px; }
 </style>
 </head>
 <body>
@@ -238,9 +315,13 @@ _HTML_PAGE = """<!doctype html>
   <p class="muted" style="font-size:12px; margin-top:0;">Coste estimado (precio público de mercado) · free tier: $0</p>
   <div id="view-traces">
     <div id="traces"></div>
+    <div id="pager"></div>
     <div id="trace-detail"></div>
   </div>
-  <div id="view-stats" style="display:none"><div id="stats"></div></div>
+  <div id="view-stats" style="display:none">
+    <div id="stats"></div>
+    <div id="stat-charts"></div>
+  </div>
   <div id="view-query" style="display:none">
     <div class="toolbar">
       <input id="q-agent" placeholder="agent">
@@ -248,37 +329,51 @@ _HTML_PAGE = """<!doctype html>
       <input id="q-min" type="number" placeholder="min duration (ms)">
       <input id="q-since" type="number" placeholder="since days">
       <button onclick="runQuery()">Search</button>
+      <button onclick="exportQuery()">Export CSV</button>
     </div>
     <div id="query-results"></div>
   </div>
 </main>
 <script>
 let detailShown = null;
+let pageOffset = 0;
+const PAGE_SIZE = 20;
 function $(id){ return document.getElementById(id); }
 function show(name){
   ["traces","stats","query"].forEach(v => $("view-"+v).style.display = v===name ? "" : "none");
   ["traces","stats","query"].forEach(v => $("tab-"+v).classList.toggle("active", v===name));
-  if (name === "traces") { $("traces").innerHTML = ""; $("trace-detail").innerHTML = ""; detailShown = null; loadTraces(); }
+  if (name === "traces") { $("traces").innerHTML = ""; $("trace-detail").innerHTML = ""; pageOffset = 0; detailShown = null; loadTraces(); }
   if (name === "stats") loadStats();
 }
 function esc(s){ const d=document.createElement("div"); d.textContent = s==null?"":String(s); return d.innerHTML; }
 function money(v){ return "$"+ (v||0).toFixed(4); }
+function fmtDur(ms){ ms=Number(ms)||0; if(ms<0||isNaN(ms)) return ms+"ms"; if(ms<1000) return ms+"ms"; if(ms<60000){ const s=ms/1000; return (s<10? s.toFixed(1):s.toFixed(0))+"s"; } const m=Math.floor(ms/60000), s=Math.round((ms%60000)/1000); return m+"m "+(s>=1?s+"s":""); }
+function fmtNum(n){ return (Number(n)||0).toLocaleString("en-US"); }
 async function get(path){
   const r = await fetch(path);
   return r.json();
 }
 async function loadTraces(){
-  const data = await get("/api/traces?limit=20");
+  const data = await get("/api/traces?limit=" + PAGE_SIZE + "&offset=" + pageOffset);
   const t = $("traces");
-  if (!data.length){ t.innerHTML = '<p class="muted">No traces yet.</p>'; return; }
+  const total = (await get("/api/trace-count")).total || 0;
+  if (!data.length){ t.innerHTML = '<p class="muted">No traces yet.</p>'; $("pager").innerHTML=""; return; }
   t.innerHTML = "<table><thead><tr><th>Trace</th><th class='right'>Spans</th><th class='right'>Duration</th><th class='right'>Tokens</th><th class='right'>Cost</th><th class='right'>Errors</th><th>Started</th></tr></thead><tbody>" +
     data.map(r => `<tr class="clickable" onclick="openTrace('${esc(r.trace_id)}')">
-      <td>${esc(r.trace_id.slice(0,8))}…</td><td class="right">${r.spans}</td><td class="right">${r.duration_ms}ms</td>
-      <td class="right">${r.tokens}</td><td class="right">${money(r.cost_usd)}</td>
+      <td>${esc(r.trace_id.slice(0,8))}…</td><td class="right">${r.spans}</td><td class="right">${fmtDur(r.duration_ms)}</td>
+      <td class="right">${fmtNum(r.tokens)}</td><td class="right">${money(r.cost_usd)}</td>
       <td class="right">${r.errors ? '<span class="badge err">'+r.errors+'</span>' : "0"}</td>
       <td class="muted">${r.started_at ? r.started_at.slice(0,19).replace("T"," ") : ""}</td></tr>`).join("") +
     "</tbody></table>";
+  const from = pageOffset + 1, to = pageOffset + data.length;
+  $("pager").innerHTML = '<div class="pager">' +
+    '<button onclick="pagePrev()" ' + (pageOffset===0?'disabled':'') + '>‹ Prev</button>' +
+    '<span class="muted">' + from + '–' + to + ' de ' + total + '</span>' +
+    '<button onclick="pageNext()" ' + (to>=total?'disabled':'') + '>Next ›</button>' +
+    '</div>';
 }
+async function pagePrev(){ pageOffset = Math.max(0, pageOffset - PAGE_SIZE); loadTraces(); }
+async function pageNext(){ pageOffset += PAGE_SIZE; loadTraces(); }
 async function openTrace(id){
   const data = await get("/api/trace/" + id);
   $("trace-detail").innerHTML = renderTree(id, data.spans) + renderSpans(data.spans);
@@ -291,7 +386,7 @@ function renderTree(id, spans){
     const s = spans.find(x => x.span_id === sid);
     const kids = (byParent[sid] || []).map(k => node(k.span_id)).join("");
     const badge = s.status === "error" ? '<span class="badge err">ERROR</span>' : '<span class="badge ok">ok</span>';
-    return `<li>${badge} <b>${esc(s.agent)}</b> ${esc(s.model||"")} → ${s.duration_ms}ms · ${s.tokens_input+s.tokens_output} tok · ${money(s.cost_usd)}${kids ? "<ul>"+kids+"</ul>" : ""}</li>`;
+    return `<li>${badge} <b>${esc(s.agent)}</b> ${esc(s.model||"")} → ${fmtDur(s.duration_ms)} · ${fmtNum(s.tokens_input+s.tokens_output)} tok · ${money(s.cost_usd)}${kids ? "<ul>"+kids+"</ul>" : ""}</li>`;
   }
   const roots = (byParent["__root__"] || []).map(r => node(r.span_id)).join("");
   return `<h3>Trace ${esc(id.slice(0,8))}…</h3><div class="tree"><ul>${roots}</ul></div>`;
@@ -299,7 +394,7 @@ function renderTree(id, spans){
 function renderSpans(spans){
   return spans.map(s => `<div class="detail">
     <b>${esc(s.agent)}</b> ${esc(s.model||"")} <span class="muted">(${esc(s.span_id.slice(0,8))}…)</span> ·
-    <span class="${s.status==="error"?"err":"ok"}">${esc(s.status)}</span> · ${s.duration_ms}ms · ${s.tokens_input+s.tokens_output} tok · ${money(s.cost_usd)}${s.ttft_ms!=null ? " · ttft "+s.ttft_ms+"ms" : ""}
+    <span class="${s.status==="error"?"err":"ok"}">${esc(s.status)}</span> · ${fmtDur(s.duration_ms)} · ${fmtNum(s.tokens_input+s.tokens_output)} tok · ${money(s.cost_usd)}${s.ttft_ms!=null ? " · ttft "+fmtDur(s.ttft_ms) : ""}
     ${s.error ? "<p class='err'>"+esc(s.error)+"</p>" : ""}
     <details><summary>input</summary><pre>${esc(JSON.stringify(s.input))}</pre></details>
     <details><summary>output</summary><pre>${esc(JSON.stringify(s.output))}</pre></details>
@@ -310,9 +405,10 @@ async function loadStats(){
   const t = $("stats");
   if (!data.length){ t.innerHTML = '<p class="muted">No data.</p>'; return; }
   t.innerHTML = "<table><thead><tr><th>Agent</th><th class='right'>Spans</th><th class='right'>Tokens</th><th class='right'>Cost</th><th class='right'>Errors</th><th class='right'>Avg ms</th><th class='right'>P95 ms</th></tr></thead><tbody>" +
-    data.map(r => `<tr><td>${esc(r.agent)}</td><td class="right">${r.spans}</td><td class="right">${r.tokens}</td><td class="right">${money(r.cost_usd)}</td><td class="right">${r.errors}</td><td class="right">${r.avg_duration_ms}</td><td class="right">${r.p95_duration_ms}</td></tr>`).join("") +
+    data.map(r => `<tr><td>${esc(r.agent)}</td><td class="right">${r.spans}</td><td class="right">${fmtNum(r.tokens)}</td><td class="right">${money(r.cost_usd)}</td><td class="right">${r.errors}</td><td class="right">${fmtDur(r.avg_duration_ms)}</td><td class="right">${fmtDur(r.p95_duration_ms)}</td></tr>`).join("") +
     "</tbody></table>";
   renderCostBars(data);
+  loadCharts(data);
 }
 function renderCostBars(data){
   const maxCost = Math.max(...data.map(r => r.cost_usd), 0.0001);
@@ -322,6 +418,27 @@ function renderCostBars(data){
       return `<div class="bar-row"><span class="bar-label">${esc(r.agent)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><span class="bar-val">${money(r.cost_usd)}</span></div>`;
     }).join("") + "</div>";
   $("stats").insertAdjacentHTML("beforeend", html);
+}
+async function loadCharts(statsData){
+  const box = $("stat-charts");
+  if (typeof Plotly === "undefined"){ box.innerHTML = '<p class="muted">Gráficos requieren conexión a Plotly CDN.</p>'; return; }
+  box.innerHTML = '<div class="chart-box"><h3>Cost by agent</h3><div id="chart-cost"></div></div>' +
+                  '<div class="chart-box"><h3>Spans over time</h3><div id="chart-ts"></div></div>';
+  const cost = await get("/api/stats");
+  Plotly.newPlot("chart-cost", [{
+    x: cost.map(r => r.cost_usd), y: cost.map(r => r.agent), type: "bar", orientation: "h",
+    marker: {color: "#22d3ee"}, text: cost.map(r => money(r.cost_usd)), textposition: "auto"
+  }], {paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"rgba(0,0,0,0)", font:{color:"#e6e6e6"}, margin:{l:120,r:30,t:10,b:30}}, {responsive:true});
+  const ts = await get("/api/timeseries?bucket=day");
+  if (ts.length){
+    Plotly.newPlot("chart-ts", [{
+      x: ts.map(r => r.bucket), y: ts.map(r => r.spans), type: "scatter", mode: "lines+markers",
+      name: "spans", line: {color: "#a855f7"}
+    }, {
+      x: ts.map(r => r.bucket), y: ts.map(r => r.cost_usd), type: "scatter", mode: "lines+markers",
+      name: "cost (est.)", yaxis: "y2", line: {color: "#22d3ee"}
+    }], {paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"rgba(0,0,0,0)", font:{color:"#e6e6e6"}, margin:{l:60,r:60,t:10,b:40}, yaxis:{title:"spans"}, yaxis2:{title:"$", overlaying:"y", side:"right"}}, {responsive:true});
+  }
 }
 async function runQuery(){
   const p = new URLSearchParams();
@@ -333,8 +450,16 @@ async function runQuery(){
   const t = $("query-results");
   if (!data.length){ t.innerHTML = '<p class="muted">No matches.</p>'; return; }
   t.innerHTML = "<table><thead><tr><th>Span</th><th>Agent</th><th>Model</th><th>Status</th><th class='right'>Duration</th><th class='right'>Cost</th></tr></thead><tbody>" +
-    data.map(s => `<tr><td>${esc(s.span_id.slice(0,8))}…</td><td>${esc(s.agent)}</td><td>${esc(s.model||"-")}</td><td><span class="badge ${s.status==="error"?"err":"ok"}">${esc(s.status)}</span></td><td class="right">${s.duration_ms}ms</td><td class="right">${money(s.cost_usd)}</td></tr>`).join("") +
+    data.map(s => `<tr><td>${esc(s.span_id.slice(0,8))}…</td><td>${esc(s.agent)}</td><td>${esc(s.model||"-")}</td><td><span class="badge ${s.status==="error"?"err":"ok"}">${esc(s.status)}</span></td><td class="right">${fmtDur(s.duration_ms)}</td><td class="right">${money(s.cost_usd)}</td></tr>`).join("") +
     "</tbody></table>";
+}
+function exportQuery(){
+  const p = new URLSearchParams();
+  if ($("q-agent").value) p.set("agent", $("q-agent").value);
+  if ($("q-status").value) p.set("status", $("q-status").value);
+  if ($("q-min").value) p.set("min_duration", $("q-min").value);
+  if ($("q-since").value) p.set("since_days", $("q-since").value);
+  window.location.href = "/api/export.csv?" + p.toString();
 }
 function tick(){
   if ($("autorefresh").checked){ clearInterval(window.__ti); window.__ti = setInterval(loadTraces, 5000); }

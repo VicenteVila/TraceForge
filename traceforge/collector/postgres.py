@@ -221,7 +221,7 @@ class PostgresCollector(TraceCollector):
             row = cur.fetchone()
             return self._deserialize_span(row) if row else None
 
-    def list_traces(self, limit: int = 10) -> list[str]:
+    def list_traces(self, limit: int = 10, offset: int = 0) -> list[str]:
         conn = self._get_connection()
         with conn.cursor() as cur:
             cur.execute(
@@ -229,9 +229,9 @@ class PostgresCollector(TraceCollector):
                 SELECT trace_id FROM spans
                 GROUP BY trace_id
                 ORDER BY MAX(started_at) DESC
-                LIMIT %s
+                LIMIT %s OFFSET %s
                 """,
-                (limit,),
+                (limit, offset),
             )
             return [row["trace_id"] for row in cur.fetchall()]
 

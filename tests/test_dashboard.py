@@ -106,3 +106,42 @@ def test_query_filter(base):
 def test_unknown_route_404(base):
     status, _ = _get(base + "/api/nope")
     assert status == 404
+
+
+def test_trace_count(base):
+    status, body = _get(base + "/api/trace-count")
+    assert status == 200
+    assert json.loads(body)["total"] == 1
+
+
+def test_timeseries(base):
+    status, body = _get(base + "/api/timeseries?bucket=day")
+    assert status == 200
+    data = json.loads(body)
+    assert len(data) == 1
+    assert data[0]["spans"] == 2
+    assert set(data[0]) >= {"bucket", "spans", "tokens", "cost_usd", "errors"}
+
+
+def test_export_csv(base):
+    status, body = _get(base + "/api/export.csv?agent=dash_child")
+    assert status == 200
+    assert "text/csv" in body or "attachment" in body or body.startswith("trace_id,")
+    assert "dash_child" in body
+
+
+def test_traces_pagination(collector, base):
+    """Con 6 trazas y página de 5, la offset 5 devuelve la última traza."""
+    for i in range(5):
+
+        @trace(agent=f"extra_{i}", model="m", collector=collector)
+        def extra():
+            return i
+
+        extra()
+    status, body = _get(base + "/api/traces?limit=5&offset=0")
+    assert status == 200
+    assert len(json.loads(body)) == 5
+    status, body = _get(base + "/api/traces?limit=5&offset=5")
+    assert status == 200
+    assert len(json.loads(body)) == 1

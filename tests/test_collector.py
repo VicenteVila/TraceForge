@@ -45,6 +45,22 @@ def test_list_traces_returns_recent(collector):
     assert recent == ids[-3:]
 
 
+def test_list_traces_offset_pagination(collector):
+    ids = []
+    for i in range(5):
+        s = TraceSpan(agent="a")
+        collector.save(s)
+        ids.append(s.trace_id)
+
+    page1 = collector.list_traces(limit=2, offset=0)
+    page2 = collector.list_traces(limit=2, offset=2)
+    page3 = collector.list_traces(limit=2, offset=4)
+    assert page1 == ids[-2:]
+    assert len(page1) == 2 and len(page2) == 2 and len(page3) == 1
+    assert len(set(page1 + page2 + page3)) == 5
+    assert collector.list_traces(limit=2, offset=99) == []
+
+
 def test_get_last_trace_id(collector):
     assert collector.get_last_trace_id() is None
 

@@ -207,16 +207,16 @@ class SQLiteCollector(TraceCollector):
         row = cursor.fetchone()
         return self._deserialize_span(row) if row else None
 
-    def list_traces(self, limit: int = 10) -> list[str]:
+    def list_traces(self, limit: int = 10, offset: int = 0) -> list[str]:
         conn = self._get_connection()
         cursor = conn.execute(
             """
             SELECT trace_id FROM spans
             GROUP BY trace_id
             ORDER BY MAX(started_at) DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
         """,
-            (limit,),
+            (limit, offset),
         )
         return [row["trace_id"] for row in cursor.fetchall()]
 

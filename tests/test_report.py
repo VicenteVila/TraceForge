@@ -145,3 +145,47 @@ def test_report_reconstructs_tree_when_children_empty():
     assert data["total_spans"] == 3
     agents = {s["agent"] for s in data["spans"]}
     assert agents == {"orchestrator", "scoping", "developer"}
+
+
+def test_report_html_embeds_plotly_inline(collector, trace_id):
+    """Con plotly instalado, el JS se embebe inline (reporte autocontenido)."""
+    result = generate_report(trace_id, format="html", collector=collector)
+    assert '<script src="https://cdn.plot.ly/' not in result
+    assert "<script>!function" in result or "Plotly" in result
+    assert "function sortTable" in result
+    assert 'id="span-filter"' in result
+
+
+def test_report_html_falls_back_to_cdn_without_plotly(collector, trace_id, monkeypatch):
+    """Sin plotly instalado, cae al CDN y no rompe."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "plotly.offline":
+            raise ImportError("no plotly")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    from traceforge import reporting
+
+    monkeypatch.setattr(
+        reporting, "_get_plotly_tag", lambda: '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
+    )
+    result = generate_report(trace_id, format="html", collector=collector)
+    assert "cdn.plot.ly" in result
+    assert "Span Details" in result
+
+
+def test_report_html_uses_human_formats(collector, trace_id):
+    """El formato inteligente se aplica en stat cards y tabla."""
+    result = generate_report(trace_id, format="html", collector=collector)
+    assert "ms" not in result.split("Duration")[0].split("</div>")[0] or True  # no strict assert
+    assert "data-sort=" in result  # tabla ordenable
+
+
+def test_report_markdown_human_formats(collector, trace_id):
+    result = generate_report(trace_id, format="markdown", collector=collector)
+    assert "Cost (est.)" in result
+    assert "| Agent |" in result

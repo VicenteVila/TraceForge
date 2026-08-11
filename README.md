@@ -51,7 +51,8 @@ Traditional logs don't connect causes. TraceForge links every step with a **pers
 - ✅ `span()` context manager for code that isn't a function
 - ✅ SQLite persistence with queries by agent, status, duration
 - ✅ Automatic cost calculation per model (Gemini, GPT, Claude, Llama, DeepSeek, 200+)
-- ✅ CLI with Rich tree output and HTML reports (Markdown/JSON also supported)
+- ✅ CLI with Rich tree output and self-contained HTML reports (Gantt chart, sortable/searchable table; Markdown/JSON also supported)
+- ✅ Web dashboard with Plotly charts, pagination and CSV export
 - ✅ OpenTelemetry export
 - ✅ Async support with contextvars for concurrent traces
 - ✅ Streaming metrics (TTFT, token throughput, per-chunk latency)
@@ -70,7 +71,7 @@ pip install git+https://github.com/VicenteVila/TraceForge.git
 With extras:
 
 ```bash
-pip install "traceforge[plotly] @ git+https://github.com/VicenteVila/TraceForge.git"   # HTML reports with Gantt charts
+pip install "traceforge[plotly] @ git+https://github.com/VicenteVila/TraceForge.git"   # HTML reports with inline Gantt charts (self-contained)
 pip install "traceforge[otel] @ git+https://github.com/VicenteVila/TraceForge.git"     # OpenTelemetry export
 pip install "traceforge[postgres] @ git+https://github.com/VicenteVila/TraceForge.git" # PostgreSQL backend
 pip install "traceforge[clickhouse] @ git+https://github.com/VicenteVila/TraceForge.git" # ClickHouse backend
@@ -193,19 +194,20 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 ## CLI
 
 ```bash
-traceforge list --last 10                          # last 10 traces
+traceforge list --last 10                          # last 10 traces (duration, cost, Started)
 traceforge list --json                             # machine-readable
 traceforge show abc-123                            # span tree
 traceforge show abc-123 --json                     # spans as JSON
-traceforge stats --agent planner --since 7         # metrics by agent
+traceforge stats --agent planner --since 7         # metrics by agent (cost %, P95)
+traceforge stats --sort tokens                     # order by cost/tokens/spans/duration/errors
 traceforge stats --json
 traceforge query --agent planner --status error --min-duration 500
 traceforge query --since 7 --json
-traceforge report abc-123 -o report.html           # HTML report with Gantt
+traceforge report abc-123 -o report.html           # self-contained HTML report (Gantt + plotly inline)
 traceforge export --format json                    # export to JSON
 traceforge export --format otel --since 7          # export to OpenTelemetry
 traceforge clear --yes                             # wipe all traces
-traceforge dashboard --port 8080                   # web dashboard (SPA)
+traceforge dashboard --port 8080                   # web dashboard (SPA, paginated, plotly charts)
 ```
 
 Point the CLI at any backend (memory, sqlite, postgres, clickhouse):
@@ -240,7 +242,15 @@ traceforge.dashboard(host="0.0.0.0", port=8080)
 ```
 
 The backend exposes a JSON API (`/api/health`, `/api/traces`, `/api/trace/<id>`,
-`/api/stats`, `/api/query`) that scripts can consume too.
+`/api/stats`, `/api/query`, `/api/timeseries`, `/api/export.csv`,
+`/api/trace-count`) that scripts can consume too.
+
+- **Charts**: a Plotly chart for token/cost usage over time loads from the CDN;
+  if the browser is offline the page degrades gracefully to tabular views.
+- **Pagination**: `/api/traces` accepts `limit`/`offset` (also supported by the
+  `list_traces(limit, offset)` collector interface).
+- **CSV export**: `/api/export.csv?agent=<a>&since=<days>&status=<s>` streams a
+  filtered CSV of all spans.
 
 ---
 

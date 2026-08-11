@@ -126,7 +126,7 @@ class TraceCollector:
     def get_span(self, span_id: str) -> Optional[TraceSpan]:
         raise NotImplementedError
 
-    def list_traces(self, limit: int = 10) -> list[str]:
+    def list_traces(self, limit: int = 10, offset: int = 0) -> list[str]:
         raise NotImplementedError
 
     def get_last_trace_id(self) -> Optional[str]:

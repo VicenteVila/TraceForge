@@ -11,6 +11,7 @@ from rich.tree import Tree
 
 from .core import TraceCollector, TraceSpan
 from .decorator import _get_default_collector
+from .format import fmt_cost, fmt_duration, fmt_number, fmt_throughput
 
 app = typer.Typer(help="TraceForge - Trazabilidad para pipelines multi-agente")
 console = Console()
@@ -77,18 +78,18 @@ def _build_span_tree(span: TraceSpan, collector: TraceCollector) -> Tree:
     label_parts = [f"[bold]{span.agent}[/bold]"]
     if span.model:
         label_parts.append(f"({span.model})")
-    label_parts.append(f"→ {span.duration_ms}ms")
+    label_parts.append(f"→ {fmt_duration(span.duration_ms)}")
     if span.tokens_input or span.tokens_output:
-        label_parts.append(f"| {span.tokens_input + span.tokens_output} tokens")
+        label_parts.append(f"| {fmt_number(span.tokens_input + span.tokens_output)} tokens")
     if span.stream:
         metrics = []
         if span.ttft_ms is not None:
-            metrics.append(f"⏱ ttft {span.ttft_ms:.0f}ms")
+            metrics.append(f"⏱ ttft {fmt_duration(span.ttft_ms)}")
         if span.throughput_tps:
-            metrics.append(f"{span.throughput_tps:.0f} tok/s")
+            metrics.append(f"{fmt_throughput(span.throughput_tps)}")
         label_parts.append(f"| [cyan]{' · '.join(metrics)}[/cyan]")
     if span.cost_usd:
-        label_parts.append(f"| ${span.cost_usd:.4f}")
+        label_parts.append(f"| {fmt_cost(span.cost_usd)}")
     if span.input_truncated or span.output_truncated:
         label_parts.append("[yellow]⚠ truncated[/yellow]")
     if span.status == "error":
@@ -134,8 +135,8 @@ def show_trace(
     error_count = sum(1 for s in spans if s.status == "error")
 
     console.print(f"\n[bold]Trace:[/bold] {trace_id}")
-    summary = f"  Spans: {len(spans)} | Duration: {total_duration}ms"
-    summary += f" | Tokens: {total_tokens} | Cost (est.): ${total_cost:.4f} | Errors: {error_count}"
+    summary = f"  Spans: {len(spans)} | Duration: {fmt_duration(total_duration)}"
+    summary += f" | Tokens: {fmt_number(total_tokens)} | Cost (est.): {fmt_cost(total_cost)} | Errors: {error_count}"
     console.print(summary)
 
     for root in roots:
@@ -158,6 +159,7 @@ def list_traces(
     rows = []
     for tid in reversed(trace_ids):
         spans = _collector.get_trace(tid)
+        started = min((s.started_at for s in spans if s.started_at), default=None)
         rows.append(
             {
                 "trace_id": tid,
@@ -166,6 +168,7 @@ def list_traces(
                 "tokens": sum(s.tokens_input + s.tokens_output for s in spans),
                 "cost_usd": round(sum(s.cost_usd for s in spans), 6),
                 "errors": sum(1 for s in spans if s.status == "error"),
+                "started_at": started.isoformat() if started else "",
             }
         )
 
@@ -180,15 +183,18 @@ def list_traces(
     table.add_column("Tokens")
     table.add_column("Cost (est.)")
     table.add_column("Errors")
+    table.add_column("Started")
 
     for row in rows:
+        started = row["started_at"]
         table.add_row(
             row["trace_id"][:8] + "...",
             str(row["spans"]),
-            f"{row['duration_ms']}ms",
-            str(row["tokens"]),
-            f"${row['cost_usd']:.4f}",
+            fmt_duration(row["duration_ms"]),
+            fmt_number(row["tokens"]),
+            fmt_cost(row["cost_usd"]),
             f"[red]{row['errors']}[/red]" if row["errors"] else "0",
+            started[:19].replace("T", " ") if started else "-",
         )
 
     console.print(table)
@@ -215,6 +221,7 @@ def show(
 def stats(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Filtrar por agente"),
     since_days: Optional[int] = typer.Option(None, "--since", "-s", help="Días hacia atrás"),
+    sort_by: str = typer.Option("cost", "--sort", help="Ordenar por: cost, tokens, spans, duration, errors"),
     json_output: bool = typer.Option(False, "--json", help="Salida JSON"),
 ):
     _collector = _get_default_collector()
@@ -239,7 +246,7 @@ def stats(
         by_agent[s.agent]["durations"].append(s.duration_ms)
 
     rows = []
-    for agt, data in sorted(by_agent.items()):
+    for agt, data in by_agent.items():
         durations = sorted(data["durations"])
         p95 = _percentile(durations, 0.95)
         avg = sum(durations) / len(durations) if durations else 0
@@ -255,7 +262,21 @@ def stats(
             }
         )
 
+    sort_keys = {
+        "cost": "cost_usd",
+        "tokens": "tokens",
+        "spans": "spans",
+        "duration": "avg_duration_ms",
+        "errors": "errors",
+    }
+    key = sort_keys.get(sort_by, "cost_usd")
+    rows.sort(key=lambda r: r[key], reverse=True)
+
+    total_cost = sum(r["cost_usd"] for r in rows)
+
     if json_output:
+        for r in rows:
+            r["cost_pct"] = round(100.0 * r["cost_usd"] / total_cost, 2) if total_cost else 0.0
         console.print(json.dumps(rows, indent=2, default=str))
         return
 
@@ -264,19 +285,22 @@ def stats(
     table.add_column("Spans")
     table.add_column("Total Tokens")
     table.add_column("Total Cost (est.)")
+    table.add_column("% Cost")
     table.add_column("Errors")
     table.add_column("Avg Duration")
     table.add_column("P95 Duration")
 
     for row in rows:
+        pct = 100.0 * row["cost_usd"] / total_cost if total_cost else 0.0
         table.add_row(
             row["agent"],
             str(row["spans"]),
-            str(row["tokens"]),
-            f"${row['cost_usd']:.4f}",
+            fmt_number(row["tokens"]),
+            fmt_cost(row["cost_usd"]),
+            f"{pct:.1f}%",
             f"[red]{row['errors']}[/red]" if row["errors"] else "0",
-            f"{row['avg_duration_ms']:.0f}ms",
-            f"{row['p95_duration_ms']}ms",
+            fmt_duration(row["avg_duration_ms"]),
+            fmt_duration(row["p95_duration_ms"]),
         )
 
     console.print(table)
@@ -433,9 +457,9 @@ def query(
             s.agent,
             s.model or "-",
             "[red]error[/red]" if s.status == "error" else "[green]ok[/green]",
-            f"{s.duration_ms}ms",
-            str(s.tokens_input + s.tokens_output),
-            f"${s.cost_usd:.4f}",
+            fmt_duration(s.duration_ms),
+            fmt_number(s.tokens_input + s.tokens_output),
+            fmt_cost(s.cost_usd),
         )
 
     console.print(table)

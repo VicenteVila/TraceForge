@@ -2,6 +2,26 @@ from typing import Any, Optional
 
 from .core import TraceCollector, TraceSpan
 from .decorator import _get_default_collector
+from .format import fmt_cost, fmt_duration, fmt_number, fmt_throughput, fmt_tokens
+
+
+def _get_plotly_tag() -> str:
+    """Devuelve la etiqueta <script> con Plotly.
+
+    Si plotly está instalado, se embebe el JS inline (reporte autocontenido,
+    funciona sin internet). Si no, se cae al CDN; si tampoco hay red, los
+    gráficos simplemente no se renderizan (las tablas siguen funcionando).
+    """
+    try:
+        from plotly.offline import get_plotlyjs
+
+        js = get_plotlyjs()
+        if js:
+            return f"<script>{js}</script>"
+    except Exception:
+        pass
+    return '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
+
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="es">
@@ -9,7 +29,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TraceForge - Reporte {{ trace_id[:8] }}</title>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+{{ plotly_tag }}
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
@@ -21,7 +41,8 @@ h2 { font-size: 18px; font-weight: 600; margin: 24px 0 12px; color: #94a3b8; }
 .stat-card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
 .chart-container { background: #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; padding: 8px 12px; color: #64748b; font-weight: 500; border-bottom: 1px solid #334155; }
+th { text-align: left; padding: 8px 12px; color: #64748b; font-weight: 500; border-bottom: 1px solid #334155; cursor: pointer; user-select: none; }
+th:hover { color: #cbd5e1; }
 td { padding: 8px 12px; border-bottom: 1px solid #1e293b; }
 tr:hover td { background: #1e293b; }
 .status-ok { color: #22c55e; }
@@ -29,6 +50,11 @@ tr:hover td { background: #1e293b; }
 .agent-tag { display: inline-block; background: #334155; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #94a3b8; }
 .truncated-tag { display: inline-block; background: #78350f; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #fbbf24; }
 .stream-tag { margin-top: 4px; font-size: 11px; color: #22d3ee; }
+.filter { width: 100%; max-width: 320px; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.filter::placeholder { color: #64748b; }
+.controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.jump { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+.jump:hover { background: #334155; }
 </style>
 </head>
 <body>
@@ -39,9 +65,9 @@ tr:hover td { background: #1e293b; }
 
 <div class="stats">
   <div class="stat-card"><div class="label">Spans</div><div class="value">{{ total_spans }}</div></div>
-  <div class="stat-card"><div class="label">Duration</div><div class="value">{{ total_duration }}ms</div></div>
-  <div class="stat-card"><div class="label">Tokens</div><div class="value">{{ total_tokens }}</div></div>
-  <div class="stat-card"><div class="label">Cost (est.)</div><div class="value">${{ "%.4f"|format(total_cost) }}</div></div>
+  <div class="stat-card"><div class="label">Duration</div><div class="value">{{ fmt_duration(total_duration) }}</div></div>
+  <div class="stat-card"><div class="label">Tokens</div><div class="value">{{ fmt_number(total_tokens) }}</div></div>
+  <div class="stat-card"><div class="label">Cost (est.)</div><div class="value">{{ fmt_cost(total_cost) }}</div></div>
   <div class="stat-card"><div class="label">Errors</div><div class="value" style="color: {{ '#ef4444' if error_count > 0 else '#22c55e' }}">{{ error_count }}</div></div>
 </div>
 <p style="color: #475569; font-size: 12px; margin: -12px 0 24px;">Coste estimado (precio público de mercado) · free tier: $0</p>
@@ -69,35 +95,41 @@ tr:hover td { background: #1e293b; }
 
 <div class="chart-container">
   <h2>Span Details</h2>
-  <table>
+  <div class="controls">
+    <input type="text" class="filter" id="span-filter" placeholder="Filtrar por agente, modelo o estado…" oninput="filterTable()">
+    <button class="jump" onclick="document.getElementById('gantt-chart')?.scrollIntoView({behavior:'smooth'})">⤴ Gantt</button>
+    <button class="jump" onclick="document.getElementById('cost-chart')?.scrollIntoView({behavior:'smooth'})">⤴ Coste</button>
+    <button class="jump" onclick="window.scrollTo({top:0,behavior:'smooth'})">⤒ Arriba</button>
+  </div>
+  <table id="span-table">
     <thead>
       <tr>
-        <th>Depth</th>
-        <th>Agent</th>
-        <th>Model</th>
-        <th>Status</th>
-        <th>Duration</th>
-        <th>Tokens</th>
-        <th>Cost</th>
+        <th onclick="sortTable(0)" title="Ordenar">Depth</th>
+        <th onclick="sortTable(1)" title="Ordenar">Agent</th>
+        <th onclick="sortTable(2)" title="Ordenar">Model</th>
+        <th onclick="sortTable(3)" title="Ordenar">Status</th>
+        <th onclick="sortTable(4)" title="Ordenar">Duration</th>
+        <th onclick="sortTable(5)" title="Ordenar">Tokens</th>
+        <th onclick="sortTable(6)" title="Ordenar">Cost</th>
         <th>Data</th>
         <th>Error</th>
       </tr>
     </thead>
     <tbody>
     {% for span in spans %}
-      <tr>
-        <td>{{ span.depth }}</td>
+      <tr data-agent="{{ span.agent|lower }}" data-model="{{ (span.model or '')|lower }}" data-status="{{ span.status }}">
+        <td data-sort="{{ span.depth }}">{{ span.depth }}</td>
         <td><span class="agent-tag">{{ span.agent }}</span></td>
         <td>{{ span.model or '-' }}</td>
         <td class="status-{{ span.status }}">{{ '✓' if span.status == 'ok' else '✗' }}</td>
-        <td>{{ span.duration_ms }}ms</td>
-        <td>
-          {{ span.tokens_input + span.tokens_output }}
+        <td data-sort="{{ span.duration_ms }}">{{ fmt_duration(span.duration_ms) }}</td>
+        <td data-sort="{{ span.tokens_input + span.tokens_output }}">
+          {{ fmt_number(span.tokens_input + span.tokens_output) }}
           {% if span.stream %}
-            <div class="stream-tag">⏱ TTFT {{ "%.0f"|format(span.ttft_ms) }}ms · {{ span.throughput_tps }} tok/s · {{ span.stream_chunks }} chunks</div>
+            <div class="stream-tag">⏱ TTFT {{ fmt_duration(span.ttft_ms) if span.ttft_ms is not none }} · {{ fmt_throughput(span.throughput_tps) }} · {{ fmt_number(span.stream_chunks) }} chunks</div>
           {% endif %}
         </td>
-        <td>${{ "%.4f"|format(span.cost_usd) }}</td>
+        <td data-sort="{{ span.cost_usd }}">{{ fmt_cost(span.cost_usd) }}</td>
         <td>
           {% if span.input_truncated or span.output_truncated %}
             <span class="truncated-tag">⚠ {{ 'input' if span.input_truncated }}{{ ', output' if span.output_truncated }} truncated</span>
@@ -123,6 +155,29 @@ Plotly.newPlot('sankey-chart', sankeyData.data, sankeyData.layout, {responsive: 
 var costData = {{ cost_json | safe }};
 Plotly.newPlot('cost-chart', costData.data, costData.layout, {responsive: true});
 {% endif %}
+function sortTable(col){
+  const table = document.getElementById("span-table");
+  const tbody = table.tBodies[0];
+  const rows = Array.from(tbody.rows);
+  const th = table.tHead.rows[0].cells[col];
+  const asc = th.getAttribute("data-dir") !== "asc";
+  rows.sort((a, b) => {
+    const av = a.cells[col].getAttribute("data-sort") ?? a.cells[col].textContent.trim();
+    const bv = b.cells[col].getAttribute("data-sort") ?? b.cells[col].textContent.trim();
+    const an = parseFloat(av), bn = parseFloat(bv);
+    const cmp = (!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
+    return asc ? cmp : -cmp;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+  th.setAttribute("data-dir", asc ? "asc" : "desc");
+}
+function filterTable(){
+  const q = document.getElementById("span-filter").value.toLowerCase();
+  document.querySelectorAll("#span-table tbody tr").forEach(tr => {
+    const hay = tr.dataset.agent + " " + tr.dataset.model + " " + tr.dataset.status;
+    tr.style.display = hay.includes(q) ? "" : "none";
+  });
+}
 </script>
 </body>
 </html>"""
@@ -440,9 +495,9 @@ def generate_report(
             f"# TraceForge Report: `{trace_id[:8]}...`",
             "",
             f"- **Spans:** {total_spans}",
-            f"- **Duration:** {total_duration}ms",
-            f"- **Tokens:** {total_tokens}",
-            f"- **Cost (est.):** ${total_cost:.4f}",
+            f"- **Duration:** {fmt_duration(total_duration)}",
+            f"- **Tokens:** {fmt_number(total_tokens)}",
+            f"- **Cost (est.):** {fmt_cost(total_cost)}",
             f"- **Errors:** {error_count}",
             "",
             "| Agent | Model | Status | Duration | Tokens | Cost | Stream |",
@@ -452,12 +507,12 @@ def generate_report(
             status_char = "✓" if s["status"] == "ok" else "✗"
             stream_note = "-"
             if s["stream"]:
-                ttft = f"{s['ttft_ms']:.0f}ms" if s["ttft_ms"] is not None else "-"
-                stream_note = f"⏱ TTFT {ttft} · {s['throughput_tps']} tok/s"
+                ttft = fmt_duration(s["ttft_ms"]) if s["ttft_ms"] is not None else "-"
+                stream_note = f"⏱ TTFT {ttft} · {fmt_throughput(s['throughput_tps'])}"
             lines.append(
                 f"| {s['agent']} | {s['model'] or '-'} | {status_char} "
-                f"| {s['duration_ms']}ms | {s['tokens_input'] + s['tokens_output']} "
-                f"| ${s['cost_usd']:.4f} | {stream_note} |"
+                f"| {fmt_duration(s['duration_ms'])} | {fmt_number(s['tokens_input'] + s['tokens_output'])} "
+                f"| {fmt_cost(s['cost_usd'])} | {stream_note} |"
             )
         result = "\n".join(lines)
         if output:
@@ -473,6 +528,7 @@ def generate_report(
     gantt_json = _build_gantt(flat, spans_by_id)
     sankey_json = _build_sankey(flat)
     cost_json = _build_cost_chart(flat)
+    plotly_tag = _get_plotly_tag()
 
     template = Template(HTML_TEMPLATE)
     html = template.render(
@@ -486,6 +542,12 @@ def generate_report(
         gantt_json=gantt_json,
         sankey_json=sankey_json,
         cost_json=cost_json,
+        plotly_tag=plotly_tag,
+        fmt_duration=fmt_duration,
+        fmt_cost=fmt_cost,
+        fmt_number=fmt_number,
+        fmt_tokens=fmt_tokens,
+        fmt_throughput=fmt_throughput,
     )
 
     if output:

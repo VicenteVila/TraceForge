@@ -81,6 +81,53 @@ def test_cli_stats(runner, populated_collector):
     assert "child" in result.output
 
 
+def test_cli_stats_sort_and_pct(runner, populated_collector):
+    result = runner.invoke(app, ["stats", "--sort", "tokens"])
+    assert result.exit_code == 0
+    assert "% Cost" in result.output
+    assert "%" in result.output
+
+
+def test_cli_list_shows_started(runner, populated_collector):
+    result = runner.invoke(app, ["list", "--last", "5"])
+    assert result.exit_code == 0
+    assert "Started" in result.output
+    assert "-" in result.output or "T" in result.output
+
+
+def test_cli_stats_json_pct(runner, tmp_path):
+    collector = MemoryCollector()
+    set_default_collector(collector)
+    from traceforge.core import TraceSpan
+
+    for i in range(4):
+        s = TraceSpan(agent="agent", model="gemini-2.5-flash")
+        s.tokens_input = 1000
+        s.tokens_output = 2000
+        s.cost_usd = 0.0015
+        collector.save(s)
+    s = TraceSpan(agent="expensive", model="gemini-2.5-flash")
+    s.tokens_input = 10000
+    s.tokens_output = 20000
+    s.cost_usd = 0.015
+    collector.save(s)
+
+    result = runner.invoke(app, ["stats", "--json"])
+    assert result.exit_code == 0
+    rows = json.loads(result.output)
+    assert {r["agent"] for r in rows} == {"agent", "expensive"}
+    assert all("cost_pct" in r for r in rows)
+    by_name = {r["agent"]: r for r in rows}
+    assert by_name["expensive"]["cost_pct"] > by_name["agent"]["cost_pct"]
+    total = sum(r["cost_pct"] for r in rows)
+    assert total == pytest.approx(100.0, abs=0.2)
+
+
+def test_cli_stats_sort_invalid_falls_back(runner, populated_collector):
+    result = runner.invoke(app, ["stats", "--sort", "bogus"])
+    assert result.exit_code == 0
+
+
 def test_cli_report_json(runner, populated_collector, tmp_path):
     trace_id = populated_collector.get_last_trace_id()
     out = str(tmp_path / "report.json")
