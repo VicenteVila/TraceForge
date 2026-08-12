@@ -147,6 +147,8 @@ def evaluate_span(
     results: list[EvalResult] = []
 
     reference = span_reference
+    if reference is None and getattr(span, "metadata", None):
+        reference = span.metadata.get("reference")
     if reference is None and references:
         reference = references.get(span.span_id) or references.get(span.trace_id)
     if reference is not None:
@@ -187,11 +189,15 @@ def run_evals(
     judge: Optional[Callable[[str], str]] = None,
     references: Optional[dict[str, Any]] = None,
     threshold: float = Threshold,
+    group_by: Optional[str] = None,
 ) -> list[EvalResult]:
     """Evaluate spans from a collector. Returns one result per eval per span.
 
     ``references`` may map span_id or trace_id to ground truth. Without it,
-    factuality is skipped (it needs a reference to compare against).
+    factuality is skipped (it needs a reference to compare against). A span whose
+    ``metadata["reference"]`` is set is evaluated against it (self-contained).
+    ``group_by`` is a metadata key used to tag the ``detail`` field of each
+    result, so :func:`summary` can be segmented per group.
     """
     if span_ids:
         spans = [collector.get_span(sid) for sid in span_ids]
@@ -201,22 +207,46 @@ def run_evals(
 
     results: list[EvalResult] = []
     for span in spans:
-        results.extend(evaluate_span(span, judge=judge, references=references, threshold=threshold))
+        for r in evaluate_span(span, judge=judge, references=references, threshold=threshold):
+            if group_by and (span.metadata or {}) and group_by in span.metadata:
+                r.detail = f"{group_by}={span.metadata[group_by]}"
+            results.append(r)
     return results
 
 
 def summary(results: list[EvalResult]) -> dict[str, dict[str, float]]:
-    """Aggregate results per eval name: average score, pass rate and count."""
+    """Aggregate results per eval name: average score, pass rate and count.
+
+    When results carry a ``detail`` tag produced by ``run_evals(group_by=...)``,
+    the aggregate is segmented per group value: ``{eval_name: {group: {...}}}``.
+    """
     grouped: dict[str, list[float]] = {}
     passed: dict[str, int] = {}
     for r in results:
         grouped.setdefault(r.name, []).append(r.score)
         passed[r.name] = passed.get(r.name, 0) + (1 if r.passed else 0)
     out: dict[str, dict[str, float]] = {}
-    for name, scores in grouped.items():
-        out[name] = {
+
+    segmented: bool = bool(results) and bool(results[0].detail)
+    if not segmented:
+        for name, scores in grouped.items():
+            out[name] = {
+                "avg_score": sum(scores) / len(scores),
+                "pass_rate": passed[name] / len(scores),
+                "count": len(scores),
+            }
+        return out
+
+    by_group: dict[tuple[str, str], list[float]] = {}
+    passed_by_group: dict[tuple[str, str], int] = {}
+    for r in results:
+        key = (r.name, r.detail)
+        by_group.setdefault(key, []).append(r.score)
+        passed_by_group[key] = passed_by_group.get(key, 0) + (1 if r.passed else 0)
+    for (name, group), scores in sorted(by_group.items()):
+        out.setdefault(name, {})[group] = {
             "avg_score": sum(scores) / len(scores),
-            "pass_rate": passed[name] / len(scores),
+            "pass_rate": passed_by_group[(name, group)] / len(scores),
             "count": len(scores),
         }
     return out

@@ -64,6 +64,7 @@ def _span_dict(span: TraceSpan) -> dict:
         "stream": span.stream,
         "ttft_ms": span.ttft_ms,
         "stream_chunks": span.stream_chunks,
+        "metadata": span.metadata or {},
     }
 
 

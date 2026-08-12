@@ -210,6 +210,7 @@ def _build_span_tree_data(
             "throughput_tps": round(span.throughput_tps, 1) if span.throughput_tps else 0,
             "started_at": span.started_at,
             "finished_at": span.finished_at or span.started_at,
+            "metadata": span.metadata or {},
             "depth": depth,
         }
     ]

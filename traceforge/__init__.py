@@ -4,7 +4,13 @@ from typing import Optional
 
 from .collector.memory import MemoryCollector
 from .context import span as _span_context
-from .core import TraceCollector, TraceSpan, set_truncation_limits
+from .core import (
+    TraceCollector,
+    TraceSpan,
+    reset_metadata_context,
+    set_metadata_context,
+    set_truncation_limits,
+)
 from .decorator import set_default_collector, trace
 from .redact import set_pii_masker
 
@@ -116,6 +122,7 @@ def query(
     status: Optional[str] = None,
     min_duration_ms: Optional[int] = None,
     since: Optional[datetime] = None,
+    metadata: Optional[dict] = None,
 ) -> list[TraceSpan]:
     return _collector.query(
         trace_id=trace_id,
@@ -123,6 +130,7 @@ def query(
         status=status,
         min_duration_ms=min_duration_ms,
         since=since,
+        metadata=metadata,
     )
 
 
@@ -208,6 +216,8 @@ __all__ = [
     "get_last_trace_id",
     "list_traces",
     "set_truncation_limits",
+    "set_metadata_context",
+    "reset_metadata_context",
     "set_pii_masker",
     "refresh_prices",
     "run_evals",

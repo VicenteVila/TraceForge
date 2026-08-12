@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core import TraceCollector, TraceSpan
+from ..core import TraceCollector, TraceSpan, _metadata_json_path
 
 
 class SQLiteCollector(TraceCollector):
@@ -63,7 +63,8 @@ class SQLiteCollector(TraceCollector):
                 stream INTEGER DEFAULT 0,
                 ttft_ms REAL,
                 stream_chunks INTEGER DEFAULT 0,
-                chunk_offsets_ms TEXT DEFAULT '[]'
+                chunk_offsets_ms TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}'
             );
             CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON spans(trace_id);
             CREATE INDEX IF NOT EXISTS idx_spans_agent ON spans(agent);
@@ -79,6 +80,8 @@ class SQLiteCollector(TraceCollector):
             conn.execute("ALTER TABLE spans ADD COLUMN ttft_ms REAL")
             conn.execute("ALTER TABLE spans ADD COLUMN stream_chunks INTEGER DEFAULT 0")
             conn.execute("ALTER TABLE spans ADD COLUMN chunk_offsets_ms TEXT DEFAULT '[]'")
+        if "metadata" not in existing_columns:
+            conn.execute("ALTER TABLE spans ADD COLUMN metadata TEXT DEFAULT '{}'")
 
     def _serialize_span(self, span: TraceSpan) -> dict[str, Any]:
         return {
@@ -105,6 +108,7 @@ class SQLiteCollector(TraceCollector):
             "ttft_ms": span.ttft_ms,
             "stream_chunks": span.stream_chunks,
             "chunk_offsets_ms": json.dumps(span.chunk_offsets_ms),
+            "metadata": json.dumps(span.metadata or {}, ensure_ascii=False, default=str),
         }
 
     def _deserialize_span(self, row: sqlite3.Row) -> TraceSpan:
@@ -132,6 +136,7 @@ class SQLiteCollector(TraceCollector):
             ttft_ms=row["ttft_ms"],
             stream_chunks=row["stream_chunks"],
             chunk_offsets_ms=json.loads(row["chunk_offsets_ms"]) if row["chunk_offsets_ms"] else [],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
 
     def save(self, span: TraceSpan) -> None:
@@ -165,7 +170,7 @@ class SQLiteCollector(TraceCollector):
                     input_truncated, output_truncated,
                     started_at, finished_at, duration_ms,
                     status, tags, children,
-                    stream, ttft_ms, stream_chunks, chunk_offsets_ms
+                    stream, ttft_ms, stream_chunks, chunk_offsets_ms, metadata
                 ) VALUES (
                     :span_id, :trace_id, :parent_id, :agent, :model,
                     :input, :output, :error,
@@ -173,7 +178,7 @@ class SQLiteCollector(TraceCollector):
                     :input_truncated, :output_truncated,
                     :started_at, :finished_at, :duration_ms,
                     :status, :tags, :children,
-                    :stream, :ttft_ms, :stream_chunks, :chunk_offsets_ms
+                    :stream, :ttft_ms, :stream_chunks, :chunk_offsets_ms, :metadata
                 )
             """,
                 data,
@@ -237,6 +242,7 @@ class SQLiteCollector(TraceCollector):
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         conditions: list[str] = []
         params: list[Any] = []
@@ -256,6 +262,10 @@ class SQLiteCollector(TraceCollector):
         if since:
             conditions.append("started_at >= ?")
             params.append(since.isoformat())
+        if metadata:
+            for key, value in metadata.items():
+                conditions.append("json_extract(metadata, ?) = ?")
+                params.extend([_metadata_json_path(key), value])
 
         where = " AND ".join(conditions) if conditions else "1=1"
         conn = self._get_connection()

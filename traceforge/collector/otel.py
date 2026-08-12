@@ -1,10 +1,11 @@
 import hashlib
+import json
 import random
 import threading
 from datetime import datetime
 from typing import Optional
 
-from ..core import TraceCollector, TraceSpan
+from ..core import TraceCollector, TraceSpan, _metadata_contains
 
 
 def _to_ns(dt: datetime) -> int:
@@ -142,6 +143,10 @@ class OTELCollector(TraceCollector):
                 otel_span.set_attribute("error", span.error)
             if span.tags:
                 otel_span.set_attribute("tags", ",".join(span.tags))
+            for key, value in (span.metadata or {}).items():
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, ensure_ascii=False, default=str)
+                otel_span.set_attribute(f"metadata.{key}", str(value))
 
             if span.status == "error":
                 otel_span.set_status(Status(StatusCode.ERROR, span.error or "unknown error"))
@@ -177,6 +182,7 @@ class OTELCollector(TraceCollector):
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         results: list[TraceSpan] = []
 
@@ -194,6 +200,8 @@ class OTELCollector(TraceCollector):
             if min_duration_ms is not None and s.duration_ms < min_duration_ms:
                 continue
             if since and s.started_at and s.started_at < since:
+                continue
+            if metadata and not _metadata_contains(s.metadata or {}, metadata):
                 continue
             results.append(s)
 

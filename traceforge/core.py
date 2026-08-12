@@ -1,3 +1,4 @@
+import contextvars
 import uuid
 import warnings
 from datetime import datetime
@@ -6,6 +7,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from .redact import redact_value
+
+_current_metadata: contextvars.ContextVar[dict] = contextvars.ContextVar("trace_metadata", default={})
 
 MAX_INPUT_LEN = 30000
 MAX_OUTPUT_LEN = 80000
@@ -78,11 +81,17 @@ class TraceSpan(BaseModel):
     status: str = "ok"
     tags: list[str] = Field(default_factory=list)
     children: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
 
     def close(self):
         self.finished_at = datetime.now()
         self.duration_ms = int((self.finished_at - self.started_at).total_seconds() * 1000)
         self.cost_usd = _calculate_cost(self.model, self.tokens_input, self.tokens_output)
+
+    def add_metadata(self, **kwargs):
+        """Merge key-value pairs into the span's metadata."""
+        self.metadata.update(kwargs)
+        return self
 
     def set_output(self, value: Any):
         captured, truncated = _capture_output(value)
@@ -139,6 +148,7 @@ class TraceCollector:
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         raise NotImplementedError
 
@@ -216,3 +226,69 @@ def _capture_output(result: Any) -> tuple[Any, bool]:
         _truncation_warning("output")
     masked, _ = redact_value(value)
     return masked, truncated
+
+
+def set_metadata_context(**kwargs) -> tuple[dict, object]:
+    """Push key-value metadata that every new span in this context inherits.
+
+    Returns ``(previous, token)``; call :func:`reset_metadata_context` with the
+    token to restore the previous context (e.g. inside an A/B run).
+
+    Usage::
+
+        prev, token = traceforge.set_metadata_context(variant="concise", run_id="r1")
+        try:
+            run_variant()
+        finally:
+            traceforge.reset_metadata_context(token)
+    """
+    merged = dict(_current_metadata.get())
+    merged.update({k: v for k, v in kwargs.items() if v is not None})
+    previous = _current_metadata.get()
+    token = _current_metadata.set(merged)
+    return previous, token
+
+
+def reset_metadata_context(token: object) -> None:
+    """Restore the metadata context captured by :func:`set_metadata_context`."""
+    _current_metadata.reset(token)
+
+
+def _merged_span_metadata(local: Optional[dict]) -> dict:
+    """Merge inherited context metadata with span-local metadata (local wins)."""
+    merged = dict(_current_metadata.get())
+    if local:
+        merged.update(local)
+    return merged
+
+
+def _metadata_contains(data: dict, expected: dict) -> bool:
+    """Return True if ``data`` contains every key/value in ``expected``.
+
+    Values may be scalars or lists; for lists a match occurs when the expected
+    value is contained in the actual list (useful for ``input_sources``).
+    Nested keys use dot notation, e.g. ``harness.rollout``.
+    """
+    for key, want in expected.items():
+        parts = key.split(".")
+        node: Any = data
+        for p in parts:
+            if not isinstance(node, dict) or p not in node:
+                return False
+            node = node[p]
+        if isinstance(node, list):
+            if isinstance(want, list):
+                if not all(w in node for w in want):
+                    return False
+            elif want not in node:
+                return False
+        elif node != want:
+            return False
+    return True
+
+
+def _metadata_json_path(key: str) -> str:
+    """Build a SQLite/Postgres JSON path for a (possibly dotted) metadata key."""
+    if "." in key:
+        return "$" + "".join(f'."{p}"' for p in key.split("."))
+    return f'$."{key}"'

@@ -155,7 +155,56 @@ traceforge.query(status="error")
 
 # Slow executions (>5s)
 traceforge.query(min_duration_ms=5000)
+
+# Filter by semantic metadata (failures attributed to a component + archetype)
+traceforge.query(status="error", metadata={"component": "planner", "archetype": "landing-page"})
 ```
+
+### 5. Metadata
+
+Every span carries a free-form `metadata: dict` that is captured, persisted and
+queryable across all collectors. Because it is a generic dict, *you* decide the
+keys. A useful convention for multi-agent harnesses (e.g. CogniTeam) is:
+
+```python
+{
+    "component": "planner",                     # qué componente produjo el span
+    "component_version": "git:a81f9e2",
+    "config_version": "config:v12",
+    "prompt_version": "planner.v4",
+    "archetype": "landing-page",                # dominio / tipo de tarea
+    "input_sources": ["user_task", "archetype_yaml", "retrieved_skill"],
+}
+```
+
+Attach metadata three ways:
+
+```python
+import traceforge
+
+# 1. Statically, per decorated function
+@traceforge.trace(agent="planner", metadata={"component": "planner"})
+def plan(task):
+    return "plan"
+
+# 2. Per block, via the context manager (can also mutate the span object)
+with traceforge.span("developer", metadata={"component": "developer"}) as sp:
+    sp.add_metadata(tool="write_file")
+
+# 3. Dynamically, for every span lazily produced in this context
+#    (works with @trace, span() and auto-instrumentation)
+prev, token = traceforge.set_metadata_context(
+    component="planner", archetype="landing-page", run_id="r1"
+)
+try:
+    run_task()          # todos los spans creados aquí heredan la metadata
+finally:
+    traceforge.reset_metadata_context(token)
+```
+
+Combined with `status`, metadata powers *failure attribution* per component and
+*A/B run correlation* (see [`abtest`](#a-b-testing-prompts) and [`evals`](#evals)
+for offline re-analysis and self-contained reference scoring).
 
 ---
 
@@ -170,6 +219,7 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 | [`openai_integration.py`](examples/openai_integration.py) | OpenAI call instrumentation |
 | [`fastapi_integration.py`](examples/fastapi_integration.py) | FastAPI REST endpoints with tracing |
 | [`async_multi_agent.py`](examples/async_multi_agent.py) | Concurrent async agents with `asyncio.gather` |
+| [`metadata_evals.py`](examples/metadata_evals.py) | Semantic metadata, failure attribution and self-contained evals |
 
 ---
 
@@ -179,9 +229,10 @@ The [`examples/`](examples/) directory contains ready-to-run scripts:
 |---|---|
 | `init(auto_instrument, collector, db_path, dsn, ...)` | One-line activation: configure + instrument providers |
 | `configure(collector, db_path, dsn, max_input_len, redact_pii, ...)` | Set backend and capture limits (memory, sqlite, postgres, clickhouse, otel) |
-| `@trace(agent, model, tags)` | Decorate functions for automatic tracing |
-| `span(agent, model, tags)` | Context manager for inline code blocks |
-| `query(trace_id, agent, status, ...)` | Search spans with filters |
+| `@trace(agent, model, tags, metadata)` | Decorate functions for automatic tracing |
+| `span(agent, model, tags, metadata)` | Context manager for inline code blocks |
+| `query(trace_id, agent, status, metadata, ...)` | Search spans with filters |
+| `set_metadata_context(**kwargs)` / `reset_metadata_context(token)` | Push/pop metadata that every new span inherits |
 | `report(trace_id, format, output)` | Generate HTML / JSON / Markdown report |
 | `show(trace_id)` | Print trace tree to terminal |
 | `get_last_trace_id()` | Return the last generated trace_id |
@@ -282,6 +333,18 @@ from traceforge.evals import evaluate_span, run_evals
 results = run_evals(collector, span_ids=[sid], judge=openai_judge(), references={sid: "ground truth"})
 ```
 
+A span can also **carry its own reference** in metadata, making the harness
+self-contained and reproducible (no external id→reference maps to keep aligned):
+
+```python
+with traceforge.span("writer", metadata={"reference": "Entropy is disorder."}):
+    answer("Entropy.")    # the span now evaluates against metadata["reference"]
+
+results = run_evals(collector)
+summary = run_evals(collector, group_by="archetype")  # segment per archetype/domain/variant
+print(summary)  # {'factuality': {'domain=A': {...}, 'domain=B': {...}}}
+```
+
 ---
 
 ## A/B testing prompts
@@ -311,6 +374,11 @@ print(result)                            # full per-variant metrics
 
 Variants are compared on error rate, average duration, tokens, cost and
 (averaged) eval score; the winner never has 100% errors.
+
+Each run is captured with `metadata={"variant", "sample_id", "run_id", "prompt",
+"reference"}` so the produced spans can be correlated offline later; each
+`VariantMetrics` exposes the `span_ids`/`trace_ids` it produced for
+re-analysis (e.g. re-running evals with a different judge).
 
 ---
 

@@ -8,7 +8,13 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from .collector.memory import MemoryCollector
-from .core import TraceCollector, TraceSpan, _capture_input, _capture_output
+from .core import (
+    TraceCollector,
+    TraceSpan,
+    _capture_input,
+    _capture_output,
+    _merged_span_metadata,
+)
 
 _current_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("trace_id", default=None)
 _current_parent_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("parent_id", default=None)
@@ -59,8 +65,10 @@ def trace(
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
     collector: Optional[TraceCollector] = None,
+    metadata: Optional[dict] = None,
 ):
     _tags = tags or []
+    _metadata = metadata or {}
 
     def decorator(func: Callable) -> Callable:
         is_async = inspect.iscoroutinefunction(func)
@@ -87,6 +95,7 @@ def trace(
                     input=input_data,
                     input_truncated=input_truncated,
                     tags=_tags,
+                    metadata=_merged_span_metadata(_metadata),
                     started_at=datetime.now(),
                 )
 
@@ -135,6 +144,7 @@ def trace(
                     input=input_data,
                     input_truncated=input_truncated,
                     tags=_tags,
+                    metadata=_merged_span_metadata(_metadata),
                     started_at=datetime.now(),
                 )
 

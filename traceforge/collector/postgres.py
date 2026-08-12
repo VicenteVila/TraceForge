@@ -10,7 +10,7 @@ import json
 import threading
 from typing import Any, Optional
 
-from ..core import TraceCollector, TraceSpan
+from ..core import TraceCollector, TraceSpan, _metadata_contains
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS spans (
@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS spans (
     stream BOOLEAN NOT NULL DEFAULT FALSE,
     ttft_ms DOUBLE PRECISION,
     stream_chunks INTEGER NOT NULL DEFAULT 0,
-    chunk_offsets_ms TEXT NOT NULL DEFAULT '[]'
+    chunk_offsets_ms TEXT NOT NULL DEFAULT '[]',
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON spans(trace_id);
 CREATE INDEX IF NOT EXISTS idx_spans_agent ON spans(agent);
@@ -70,6 +71,7 @@ _COLUMNS = (
     "ttft_ms",
     "stream_chunks",
     "chunk_offsets_ms",
+    "metadata",
 )
 
 
@@ -106,6 +108,12 @@ class PostgresCollector(TraceCollector):
         conn = self._get_connection()
         with conn.cursor() as cur:
             cur.execute(_SCHEMA)
+            try:
+                cur.execute("ALTER TABLE spans ADD COLUMN IF NOT EXISTS metadata TEXT NOT NULL DEFAULT '{}'")
+            except Exception:
+                conn.rollback()
+                with conn.cursor() as c2:
+                    c2.execute(_SCHEMA)
         conn.commit()
 
     def _serialize_span(self, span: TraceSpan) -> dict[str, Any]:
@@ -133,6 +141,7 @@ class PostgresCollector(TraceCollector):
             "ttft_ms": span.ttft_ms,
             "stream_chunks": span.stream_chunks,
             "chunk_offsets_ms": json.dumps(span.chunk_offsets_ms),
+            "metadata": json.dumps(span.metadata or {}, ensure_ascii=False, default=str),
         }
 
     def _deserialize_span(self, row: dict) -> TraceSpan:
@@ -160,6 +169,7 @@ class PostgresCollector(TraceCollector):
             ttft_ms=row["ttft_ms"],
             stream_chunks=row["stream_chunks"],
             chunk_offsets_ms=json.loads(row["chunk_offsets_ms"]) if row["chunk_offsets_ms"] else [],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
 
     def save(self, span: TraceSpan) -> None:
@@ -249,6 +259,7 @@ class PostgresCollector(TraceCollector):
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Any = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         conditions: list[str] = []
         params: list[Any] = []
@@ -272,7 +283,10 @@ class PostgresCollector(TraceCollector):
         conn = self._get_connection()
         with conn.cursor() as cur:
             cur.execute(f"SELECT * FROM spans WHERE {where} ORDER BY started_at", params)
-            return [self._deserialize_span(row) for row in cur.fetchall()]
+            spans = [self._deserialize_span(row) for row in cur.fetchall()]
+        if metadata:
+            spans = [s for s in spans if _metadata_contains(s.metadata or {}, metadata)]
+        return spans
 
     def clear(self) -> None:
         conn = self._get_connection()

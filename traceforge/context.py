@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Generator, Optional
 
-from .core import TraceCollector, TraceSpan
+from .core import TraceCollector, TraceSpan, _merged_span_metadata
 from .decorator import (
     _current_parent_id,
     _current_trace_id,
@@ -19,6 +19,7 @@ def span(
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
     collector: Optional[TraceCollector] = None,
+    metadata: Optional[dict] = None,
 ) -> Generator[TraceSpan, Any, None]:
     _collector = collector or _get_default_collector()
     _tags = tags or []
@@ -36,6 +37,7 @@ def span(
         agent=agent,
         model=model,
         tags=_tags,
+        metadata=_merged_span_metadata(metadata or {}),
         started_at=datetime.now(),
     )
 

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-from ..core import TraceCollector, TraceSpan
+from ..core import TraceCollector, TraceSpan, _metadata_contains
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS spans (
@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS spans (
     stream UInt8,
     ttft_ms Nullable(Float64),
     stream_chunks UInt32,
-    chunk_offsets_ms String
+    chunk_offsets_ms String,
+    metadata String DEFAULT '{}'
 ) ENGINE = ReplacingMergeTree()
 ORDER BY span_id
 """
@@ -69,6 +70,7 @@ _COLUMNS = [
     "ttft_ms",
     "stream_chunks",
     "chunk_offsets_ms",
+    "metadata",
 ]
 
 
@@ -153,6 +155,7 @@ class ClickHouseCollector(TraceCollector):
             "ttft_ms": span.ttft_ms,
             "stream_chunks": span.stream_chunks,
             "chunk_offsets_ms": json.dumps(span.chunk_offsets_ms),
+            "metadata": json.dumps(span.metadata or {}, ensure_ascii=False, default=str),
         }
         return [values[c] for c in _COLUMNS]
 
@@ -181,6 +184,7 @@ class ClickHouseCollector(TraceCollector):
             ttft_ms=row["ttft_ms"],
             stream_chunks=row["stream_chunks"],
             chunk_offsets_ms=json.loads(row["chunk_offsets_ms"]) if row["chunk_offsets_ms"] else [],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
 
     def _rows(self, sql: str, params: Optional[dict[str, Any]] = None) -> list[dict]:
@@ -237,6 +241,7 @@ class ClickHouseCollector(TraceCollector):
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         conditions: list[str] = []
         params: dict[str, Any] = {}
@@ -264,6 +269,8 @@ class ClickHouseCollector(TraceCollector):
             children_by_parent.setdefault(s.parent_id, []).append(s.span_id)
         for s in spans:
             s.children = children_by_parent.get(s.span_id, [])
+        if metadata:
+            spans = [s for s in spans if _metadata_contains(s.metadata or {}, metadata)]
         return spans
 
     def clear(self) -> None:

@@ -2,7 +2,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-from ..core import TraceCollector, TraceSpan
+from ..core import TraceCollector, TraceSpan, _metadata_contains
 
 
 class MemoryCollector(TraceCollector):
@@ -67,6 +67,7 @@ class MemoryCollector(TraceCollector):
         status: Optional[str] = None,
         min_duration_ms: Optional[int] = None,
         since: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
     ) -> list[TraceSpan]:
         results: list[TraceSpan] = []
 
@@ -86,6 +87,8 @@ class MemoryCollector(TraceCollector):
             if min_duration_ms is not None and span.duration_ms < min_duration_ms:
                 continue
             if since and span.started_at and span.started_at < since:
+                continue
+            if metadata and not _metadata_contains(span.metadata or {}, metadata):
                 continue
             results.append(span)
 

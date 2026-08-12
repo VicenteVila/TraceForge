@@ -24,11 +24,12 @@ Examples::
     print(result.winner, result.reason)
 """
 
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .collector.memory import MemoryCollector
-from .core import TraceCollector
+from .core import TraceCollector, reset_metadata_context, set_metadata_context
 from .decorator import set_default_collector
 from .evals import evaluate_span
 
@@ -43,6 +44,8 @@ class VariantMetrics:
     error_rate: float
     avg_eval_score: Optional[float] = None
     eval_pass_rate: Optional[float] = None
+    span_ids: list[str] = field(default_factory=list)
+    trace_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -87,9 +90,12 @@ def compare_prompts(
     references = references or [None] * len(samples)
 
     variants: list[VariantMetrics] = []
+    run_id = str(uuid.uuid4())
     for name, prompt in prompts.items():
         agg = {"durations": [], "tokens": [], "costs": [], "errors": 0, "evals": [], "passes": 0, "runs": 0}
-        for sample, reference in zip(samples, references):
+        span_ids: list[str] = []
+        trace_ids: list[str] = []
+        for idx, (sample, reference) in enumerate(zip(samples, references)):
             agg["runs"] += 1
             local: Optional[TraceCollector] = None
             if collector is None:
@@ -102,10 +108,20 @@ def compare_prompts(
                 before_ids = set(c.list_traces(limit=10000))
 
             failed = False
+            sample_meta = {
+                "variant": name,
+                "sample_id": idx,
+                "run_id": run_id,
+                "prompt": prompt,
+                "reference": reference,
+            }
+            prev, token = set_metadata_context(**sample_meta)
             try:
                 fn(prompt, sample)
             except Exception:
                 failed = True
+            finally:
+                reset_metadata_context(token)
 
             if failed:
                 agg["errors"] += 1
@@ -119,6 +135,9 @@ def compare_prompts(
             if not spans:
                 agg["errors"] += 1
                 continue
+
+            span_ids.extend(s.span_id for s in spans)
+            trace_ids.extend(t for t in new_ids)
 
             agg["durations"].append(sum(s.duration_ms for s in spans))
             agg["tokens"].append(sum(s.tokens_input + s.tokens_output for s in spans))
@@ -143,6 +162,8 @@ def compare_prompts(
                 error_rate=agg["errors"] / total if total else 0.0,
                 avg_eval_score=sum(agg["evals"]) / eval_total if eval_total else None,
                 eval_pass_rate=agg["passes"] / eval_total if eval_total else None,
+                span_ids=span_ids,
+                trace_ids=trace_ids,
             )
         )
 

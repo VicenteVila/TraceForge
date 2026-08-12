@@ -24,7 +24,7 @@ from time import perf_counter
 from typing import Any, Callable, Optional
 
 from .context import span
-from .core import TraceCollector, TraceSpan
+from .core import TraceCollector, TraceSpan, _merged_span_metadata
 from .decorator import (
     _current_parent_id,
     _current_trace_id,
@@ -62,6 +62,7 @@ def _new_span(
         parent_id=_current_parent_id.get(),
         agent=agent,
         model=model,
+        metadata=_merged_span_metadata(None),
         started_at=datetime.now(),
     )
 
